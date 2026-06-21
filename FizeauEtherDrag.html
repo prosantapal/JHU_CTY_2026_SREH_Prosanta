@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fizeau's Experiment (1851)</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.6.0/p5.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #1e1e1e;
+            color: #eeeeee;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            background-color: #2d2d2d;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            margin-bottom: 20px;
+        }
+        .controls {
+            display: flex;
+            justify-content: space-between;
+            width: 800px;
+            margin-top: 15px;
+            padding: 15px;
+            background: #3d3d3d;
+            border-radius: 6px;
+            box-sizing: border-box;
+        }
+        .slider-group {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        input[type="range"] {
+            width: 200px;
+        }
+        .data-panel {
+            font-family: monospace;
+            font-size: 1.1em;
+            color: #4CAF50;
+        }
+        h1 { margin-top: 0; font-size: 1.5em; }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>Fizeau's Experiment (1851)</h1>
+        <div id="canvas-container"></div>
+        
+        <div class="controls">
+            <div class="slider-group">
+                <label for="vSlider">Water Velocity (v):</label>
+                <input type="range" id="vSlider" min="-0.8" max="0.8" step="0.01" value="0.3">
+                <span id="vLabel">0.3 c</span>
+            </div>
+            <div class="data-panel">
+                Fringe Shift (&Delta;N): <span id="fringeShift">0.00</span>
+            </div>
+        </div>
+        <p style="font-size: 0.85em; color: #888; text-align: center; width: 800px;">
+            * Note: The speed of light and water velocity are massively exaggerated to visualize the relativistic effects. 
+            <br>Red travels against the flow; Blue travels with the flow.
+        </p>
+    </div>
+
+    <script>
+        // Simulation Constants
+        const c = 5; // Base speed of light in vacuum (pixels per frame)
+        const n = 1.33; // Refractive index of water
+        const f = 1 - (1 / (n * n)); // Fresnel drag coefficient
+
+        // Geometry (Matching the provided diagram)
+        const S = {x: 50, y: 300};  // Source
+        const P = {x: 200, y: 300}; // Beam Splitter
+        const M_bl = {x: 200, y: 300}; // Bottom Left (Same as P for path logic)
+        const M_tl = {x: 200, y: 150}; // Top Left Mirror
+        const M_tr = {x: 700, y: 150}; // Top Right Mirror
+        const M_br = {x: 700, y: 300}; // Bottom Right Mirror
+        const T = {x: 200, y: 450}; // Telescope / Observer
+
+        let particles = [];
+        let v = 0;
+
+        function setup() {
+            let canvas = createCanvas(800, 500);
+            canvas.parent('canvas-container');
+            setInterval(spawnPulse, 1200); // Send light pulses periodically
+        }
+
+        function draw() {
+            background(30);
+            
+            // Get velocity from slider
+            v = parseFloat(document.getElementById('vSlider').value);
+            document.getElementById('vLabel').innerText = v.toFixed(2) + ' c';
+
+            // Calculate Theoretical Fringe Shift 
+            // Delta N = (4 * L * v * (n^2 - 1)) / (lambda * c)
+            // We use a scaled dummy formula for the visual readout
+            let shift = (v * (n*n - 1) * 10).toFixed(2); 
+            document.getElementById('fringeShift').innerText = shift > 0 ? "+" + shift : shift;
+
+            drawApparatus();
+            updateAndDrawParticles();
+            drawInterferencePattern(shift);
+        }
+
+        function drawApparatus() {
+            strokeWeight(2);
+            
+            // Draw Tubes (Length l)
+            fill(20, 100, 150, 100); // Water color
+            stroke(100);
+            rect(250, 135, 400, 30); // Top Tube
+            rect(250, 285, 400, 30); // Bottom Tube
+
+            // Animate Water Flow Arrows
+            drawWaterFlow(250, 135, 400, 30, v); // Top tube flows Left to Right
+            drawWaterFlow(250, 285, 400, 30, -v); // Bottom tube flows Right to Left
+
+            // Draw Mirrors and Beam Splitter
+            strokeWeight(6);
+            stroke(400);
+            line(M_tl.x + 15, M_tl.y - 15, M_tl.x - 15, M_tl.y + 15); // M (Top Left)
+            line(M_tr.x + 15, M_tr.y + 15, M_tr.x - 15, M_tr.y - 15); // M (Top Right)
+            line(M_br.x + 15, M_br.y - 15, M_br.x - 15, M_br.y + 15); // M (Bottom Right)
+            
+            // Beam Splitter P
+            stroke(100, 200, 255, 150);
+            line(P.x - 20, P.y + 20, P.x + 20, P.y - 20); 
+
+            // Source S and Telescope T
+            fill(255, 200, 0);
+            noStroke();
+            ellipse(S.x, S.y, 15, 15);
+            fill(150);
+            rect(T.x - 15, T.y, 30, 40);
+
+            // Labels
+            fill(255);
+            textSize(16);
+            textAlign(CENTER, CENTER);
+            text("S", S.x - 20, S.y);
+            text("P", P.x - 25, P.y - 25);
+            text("M", M_tl.x, M_tl.y - 30);
+            text("M", M_tr.x, M_tr.y - 30);
+            text("M", M_br.x, M_br.y + 30);
+            text("T", T.x + 30, T.y + 20);
+        }
+
+        function drawWaterFlow(x, y, w, h, velocity) {
+            stroke(255, 255, 255, 50);
+            strokeWeight(2);
+            let arrowSpacing = 50;
+            let offset = (frameCount * velocity) % arrowSpacing;
+            if (offset < 0) offset += arrowSpacing;
+            
+            for (let i = x + offset; i < x + w; i += arrowSpacing) {
+                if (i > x && i < x + w - 10) {
+                    if (velocity >= 0) {
+                        line(i, y + h/2, i + 10, y + h/2);
+                        line(i + 5, y + h/2 - 3, i + 10, y + h/2);
+                        line(i + 5, y + h/2 + 3, i + 10, y + h/2);
+                    } else {
+                        line(i, y + h/2, i - 10, y + h/2);
+                        line(i - 5, y + h/2 - 3, i - 10, y + h/2);
+                        line(i - 5, y + h/2 + 3, i - 10, y + h/2);
+                    }
+                }
+            }
+        }
+
+        function spawnPulse() {
+            // Red Particle (Clockwise - travels AGAINST flow in both tubes)
+            particles.push(new LightPulse("red", 1));
+            // Blue Particle (Counter-Clockwise - travels WITH flow in both tubes)
+            particles.push(new LightPulse("blue", -1));
+        }
+
+        function updateAndDrawParticles() {
+            for (let i = particles.length - 1; i >= 0; i--) {
+                let p = particles[i];
+                p.update();
+                p.draw();
+                if (p.isDone) {
+                    particles.splice(i, 1);
+                }
+            }
+        }
+
+        function drawInterferencePattern(shift) {
+            strokeWeight(2);
+            noFill();
+            let startY = 460;
+            let width = 100;
+            let offset = parseFloat(shift) * 10;
+
+            // Draw a simplified sine wave representing the shifting fringes
+            stroke(0, 255, 0, 150);
+            beginShape();
+            for (let x = 0; x < width; x++) {
+                let y = startY + Math.sin((x + offset) * 0.2) * 15;
+                vertex(T.x + x - width/2, y);
+            }
+            endShape();
+        }
+
+        class LightPulse {
+            constructor(color, directionType) {
+                this.color = color;
+                this.type = directionType; // 1 = Clockwise (Red), -1 = Counter (Blue)
+                this.x = S.x;
+                this.y = S.y;
+                this.state = 0;
+                this.isDone = false;
+            }
+
+            update() {
+                // Calculate speeds
+                let c_medium = c / n;
+                // Red (type 1) travels against water (v is positive to right, top tube is +v, bottom is -v)
+                // Actually, let's simplify: Red always goes against the flow, Blue always goes with it.
+                let speed_against = c_medium - v * f;
+                let speed_with = c_medium + v * f;
+
+                let currentSpeed = c; // Default to vacuum speed
+
+                if (this.type === 1) {
+                    // Clockwise (Red): Against flow
+                    if (this.state === 1) currentSpeed = speed_against;
+                    if (this.state === 3) currentSpeed = speed_against;
+                } else {
+                    // Counter-Clockwise (Blue): With flow
+                    if (this.state === 1) currentSpeed = speed_with;
+                    if (this.state === 3) currentSpeed = speed_with;
+                }
+
+                // Make sure light doesn't move backwards visually if v is too high
+                currentSpeed = max(0.5, currentSpeed);
+
+                // Path Logic based on exact diagram geometry
+                if (this.type === 1) { // CLOCKWISE PATH (Red)
+                    if (this.state === 0) { // S -> P
+                        this.x += c; if (this.x >= P.x) { this.x = P.x; this.state = 1; }
+                    } else if (this.state === 1) { // P -> M_br (Lower Tube)
+                        this.x += currentSpeed; if (this.x >= M_br.x) { this.x = M_br.x; this.state = 2; }
+                    } else if (this.state === 2) { // M_br -> M_tr
+                        this.y -= c; if (this.y <= M_tr.y) { this.y = M_tr.y; this.state = 3; }
+                    } else if (this.state === 3) { // M_tr -> M_tl (Upper Tube)
+                        this.x -= currentSpeed; if (this.x <= M_tl.x) { this.x = M_tl.x; this.state = 4; }
+                    } else if (this.state === 4) { // M_tl -> P
+                        this.y += c; if (this.y >= P.y) { this.y = P.y; this.state = 5; }
+                    } else if (this.state === 5) { // P -> T
+                        this.y += c; if (this.y >= T.y) { this.isDone = true; }
+                    }
+                } else { // COUNTER-CLOCKWISE PATH (Blue)
+                    if (this.state === 0) { // S -> P
+                        this.x += c; if (this.x >= P.x) { this.x = P.x; this.state = 1; }
+                    } else if (this.state === 1) { // P -> M_tl
+                        this.y -= c; if (this.y <= M_tl.y) { this.y = M_tl.y; this.state = 2; }
+                    } else if (this.state === 2) { // M_tl -> M_tr (Upper Tube)
+                        this.x += currentSpeed; if (this.x >= M_tr.x) { this.x = M_tr.x; this.state = 3; }
+                    } else if (this.state === 3) { // M_tr -> M_br
+                        this.y += c; if (this.y >= M_br.y) { this.y = M_br.y; this.state = 4; }
+                    } else if (this.state === 4) { // M_br -> P (Lower Tube)
+                        this.x -= currentSpeed; if (this.x <= P.x) { this.x = P.x; this.state = 5; }
+                    } else if (this.state === 5) { // P -> T
+                        this.y += c; if (this.y >= T.y) { this.isDone = true; }
+                    }
+                }
+            }
+
+            draw() {
+                noStroke();
+                if (this.color === "red") fill(255, 50, 50, 200);
+                else fill(50, 150, 255, 200);
+                
+                // Offset slightly so they don't overlap completely perfectly in vacuum
+                let offset = this.type === 1 ? -3 : 3; 
+                
+                ellipse(this.x + (this.state === 1 || this.state === 3 || this.state === 4 ? 0 : offset), 
+                        this.y + (this.state === 2 || this.state === 5 ? 0 : offset), 
+                        10, 10);
+            }
+        }
+    </script>
+</body>
+</html>

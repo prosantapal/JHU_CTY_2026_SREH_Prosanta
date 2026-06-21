@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pole in the Barn Paradox Simulation</title>
+    <!-- Load p5.js from CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.6.0/p5.min.js"></script>
+    <style>
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #030000;
+            margin: 0;
+            font-family: sans-serif;
+        }
+        canvas {
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+    </style>
+</head>
+<body>
+
+<script>
+    // Physics constants and variables
+    const c = 1; // Speed of light (normalized)
+    const v = 0.6 * c; // Relative velocity
+    const gamma = 1 / Math.sqrt(1 - (v * v) / (c * c)); // Lorentz factor (1.25)
+
+    // Rest lengths (in meters)
+    const restPoleLength = 10;
+    const restBarnLength = 8;
+
+    // Simulation variables
+    const scaleFactor = 30; // pixels per meter
+    let t = 0; // shared simulation time
+    const speed = 2; // Animation speed multiplier
+
+    function setup() {
+        createCanvas(800, 400);
+        rectMode(CENTER);
+        textAlign(CENTER, CENTER);
+        textSize(16);
+    }
+
+    function draw() {
+        background(245);
+        
+        // Draw dividing line
+        stroke(150);
+        strokeWeight(2);
+        line(0, height / 2, width, height / 2);
+
+        // Calculate contracted lengths
+        let contractedPoleLength = restPoleLength / gamma;
+        let contractedBarnLength = restBarnLength / gamma;
+
+        // Render Bob's Frame (Top Half)
+        drawBobsFrame(contractedPoleLength, restBarnLength);
+
+        // Render Alice's Frame (Bottom Half)
+        drawAlicesFrame(restPoleLength, contractedBarnLength);
+
+        // Advance time and loop the animation
+        t += speed;
+        if (t > width + 200) {
+            t = -100; // Reset animation
+        }
+    }
+
+    function drawBobsFrame(poleLen, barnLen) {
+        push();
+        translate(width / 2, height / 4); // Center of top half
+        noStroke();
+
+        // Title
+        fill(0);
+        text("Bob's Frame (Barn at Rest)", 0, -80);
+        text("Contracted Pole (8m) entering Barn (8m)", 0, -60);
+
+        // Draw Barn (Stationary)
+        let bWidth = barnLen * scaleFactor;
+        fill(100, 150, 250, 150); // Semi-transparent blue
+        rect(0, 0, bWidth, 60);
+
+        // Draw Pole (Moving right)
+        // Adjust start position so it passes through the barn
+        let pWidth = poleLen * scaleFactor;
+        let pX = (t * v) - (width / 2); 
+        fill(250, 100, 100); // Red
+        rect(pX, 0, pWidth, 10);
+
+        pop();
+    }
+
+    function drawAlicesFrame(poleLen, barnLen) {
+        push();
+        translate(width / 2, (height / 4) * 3); // Center of bottom half
+        noStroke();
+
+        // Title
+        fill(0);
+        text("Alice's Frame (Pole at Rest)", 0, -80);
+        text("Contracted Barn (6.4m) moving over Pole (10m)", 0, -60);
+
+        // Draw Pole (Stationary)
+        let pWidth = poleLen * scaleFactor;
+        fill(250, 100, 100); // Red
+        rect(0, 0, pWidth, 10);
+
+        // Draw Barn (Moving left)
+        let bWidth = barnLen * scaleFactor;
+        let bX = (width / 2) - (t * v);
+        fill(100, 150, 250, 150); // Semi-transparent blue
+        rect(bX, 0, bWidth, 60);
+
+        pop();
+    }
+</script>
+
+</body>
+</html>
