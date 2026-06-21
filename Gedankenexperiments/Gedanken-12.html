@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lorentz-Fitzgerald Contraction</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #030305;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+            color: white;
+            user-select: none;
+        }
+        canvas {
+            box-shadow: 0 0 50px rgba(0, 0, 0, 1);
+            border-radius: 8px;
+        }
+    </style>
+</head>
+<body>
+<script>
+// --- Constants & Globals ---
+const WIDTH = 800;
+const HEIGHT = 600;
+
+// Ship parameters
+const SHIP_LENGTH = 220;
+const SHIP_WIDTH = 60;
+
+// Planet parameters
+const PLANET_RADIUS = 2000;
+const ATMOSPHERE_WIDTH = 40; // Increased for a smoother web glow
+const PLANET_CENTER_INIT = { x: -1200, y: HEIGHT / 2 };
+
+// State variables
+let vx = 0.0;
+let vy = 0.0;
+let playing = false;
+let earthTime = 0.0;
+let shipTime = 0.0;
+
+let planetCenter;
+let shipWorldX = 0.0;
+let shipWorldY = 0.0;
+
+let stars = [];
+let palette;
+
+function setup() {
+    createCanvas(WIDTH, HEIGHT);
+    
+    palette = {
+        bg: color(5, 5, 12),
+        ship: color(220, 230, 255),
+        cockpit: color(100, 200, 255),
+        planet: color(40, 90, 180),
+        atmosphere: color(150, 210, 255),
+        planetOutline: color(120, 160, 255),
+        red: color(255, 60, 80),
+        green: color(50, 255, 100),
+        white: color(255)
+    };
+
+    planetCenter = { x: PLANET_CENTER_INIT.x, y: PLANET_CENTER_INIT.y };
+
+    // Generate stars
+    for (let i = 0; i < 150; i++) {
+        stars.push({
+            x: random(WIDTH),
+            y: random(HEIGHT),
+            r: random(1, 3),
+            twinkle: random(TWO_PI)
+        });
+    }
+}
+
+// --- Native Glow Helper ---
+function setGlow(clr, blurSize) {
+    drawingContext.shadowBlur = blurSize;
+    drawingContext.shadowColor = clr.toString();
+}
+
+function clearGlow() {
+    drawingContext.shadowBlur = 0;
+}
+
+// --- Main Draw Loop ---
+function draw() {
+    background(palette.bg);
+    handleInput();
+
+    // 1. Calculate Relativistic Physics
+    let v = sqrt(vx * vx + vy * vy);
+    if (v >= 0.99) {
+        let scaleF = 0.99 / v;
+        vx *= scaleF;
+        vy *= scaleF;
+        v = 0.99;
+    }
+
+    let gamma = (v !== 0) ? 1.0 / sqrt(1 - v * v) : 1.0;
+    let contraction = (v !== 0) ? sqrt(1 - v * v) : 1.0;
+
+    // 2. Update Kinematics
+    if (playing) {
+        let dt = deltaTime / 1000.0; // Seconds elapsed since last frame
+        
+        earthTime += dt;
+        shipTime += dt / gamma; // Time Dilation!
+        
+        shipWorldX += vx * dt * 200;
+        shipWorldY += vy * dt * 200;
+
+        // Move stars opposite to the velocity to simulate camera tracking ship
+        for (let s of stars) {
+            s.x -= vx * 5;
+            s.y -= vy * 5;
+            // Wrap stars around screen
+            s.x = (s.x % WIDTH + WIDTH) % WIDTH;
+            s.y = (s.y % HEIGHT + HEIGHT) % HEIGHT;
+        }
+    }
+
+    // 3. Render Scene
+    drawStars();
+
+    let planetScreenX = (WIDTH / 2) + (planetCenter.x - shipWorldX);
+    let planetScreenY = (HEIGHT / 2) + (planetCenter.y - shipWorldY);
+    drawPlanet(planetScreenX, planetScreenY, PLANET_RADIUS);
+
+    drawVelocityVector(WIDTH / 2, HEIGHT / 2, vx, vy);
+
+    let angle = (v !== 0) ? atan2(vy, vx) : 0;
+    drawShip(WIDTH / 2, HEIGHT / 2, angle, contraction);
+
+    drawHUD(v, vx, vy, gamma, contraction);
+}
+
+// --- Render Functions ---
+function drawStars() {
+    noStroke();
+    for (let s of stars) {
+        let alpha = 150 + 105 * sin(frameCount * 0.05 + s.twinkle);
+        fill(255, 255, 255, alpha);
+        circle(s.x, s.y, s.r * 2);
+    }
+}
+
+function drawPlanet(cx, cy, r) {
+    // Basic culling: don't draw if clearly off-screen
+    if (cx + r + ATMOSPHERE_WIDTH < 0 || cx - r - ATMOSPHERE_WIDTH > WIDTH ||
+        cy + r + ATMOSPHERE_WIDTH < 0 || cy - r - ATMOSPHERE_WIDTH > HEIGHT) {
+        return;
+    }
+
+    push();
+    noStroke();
+    
+    // Smooth Atmosphere Gradient
+    for (let i = ATMOSPHERE_WIDTH; i > 0; i -= 2) {
+        let alpha = map(i, 0, ATMOSPHERE_WIDTH, 80, 0);
+        fill(150, 210, 255, alpha);
+        circle(cx, cy, (r + i) * 2);
+    }
+
+    // Planet Body
+    fill(palette.planet);
+    stroke(palette.planetOutline);
+    strokeWeight(6);
+    circle(cx, cy, r * 2);
+    pop();
+}
+
+function drawVelocityVector(x, y, v_x, v_y) {
+    let scaleF = 120;
+    let endX = x + v_x * scaleF;
+    let endY = y + v_y * scaleF;
+
+    setGlow(palette.red, 15);
+    stroke(palette.red);
+    strokeWeight(4);
+    line(x, y, endX, endY);
+    
+    fill(palette.red);
+    noStroke();
+    circle(endX, endY, 10);
+    clearGlow();
+}
+
+function drawShip(x, y, angle, contraction) {
+    push();
+    translate(x, y);
+    rotate(angle);
+
+    // Apply Lorentz-Fitzgerald Contraction (Squash along the X-axis)
+    scale(contraction, 1);
+
+    setGlow(palette.ship, 25);
+    
+    // Ship Hull
+    fill(palette.ship);
+    noStroke();
+    ellipse(0, 0, SHIP_LENGTH, SHIP_WIDTH);
+
+    // Engine glow at the rear
+    fill(100, 200, 255, 150);
+    ellipse(-SHIP_LENGTH * 0.45, 0, 20, SHIP_WIDTH * 0.5);
+
+    clearGlow();
+
+    // Cockpit Window
+    fill(palette.cockpit);
+    rectMode(CENTER);
+    rect(SHIP_LENGTH * 0.15, 0, SHIP_LENGTH * 0.25, SHIP_WIDTH * 0.4, 8);
+
+    pop();
+}
+
+function drawHUD(v, v_x, v_y, gamma, contraction) {
+    let shipBlink = (shipTime % 0.5) < 0.25;
+    let earthBlink = (earthTime % 0.5) < 0.25;
+
+    // Draw Clocks
+    drawClock(WIDTH / 2, HEIGHT / 2 - 80, shipTime, "Ship Clock", palette.green, shipBlink);
+    drawClock(WIDTH / 2, 60, earthTime, "Earth Clock", palette.white, earthBlink);
+
+    // HUD Text Block
+    fill(15, 20, 25, 200);
+    noStroke();
+    rectMode(CENTER);
+    rect(WIDTH / 2, HEIGHT - 65, WIDTH, 130);
+
+    textAlign(CENTER, CENTER);
+    textFont("monospace");
+    
+    // Velocity Data
+    textSize(24);
+    textStyle(BOLD);
+    fill(palette.red);
+    text(`v = (${v_x.toFixed(2)}c, ${v_y.toFixed(2)}c)  |v| = ${v.toFixed(2)}c`, WIDTH / 2, HEIGHT - 95);
+
+    // Relativistic Factors
+    textSize(18);
+    fill(palette.cockpit);
+    text(`Lorentz contraction: ${contraction.toFixed(3)}   Time dilation (γ): ${gamma.toFixed(3)}`, WIDTH / 2, HEIGHT - 55);
+
+    // Instructions
+    textSize(14);
+    textStyle(NORMAL);
+    fill(180);
+    text("Arrows: Set velocity vector (±0.1c)   SPACE: Play/Pause   R: Reset", WIDTH / 2, HEIGHT - 25);
+}
+
+function drawClock(x, y, seconds, label, col, isBlinking) {
+    push();
+    textFont("monospace");
+    textSize(28);
+    textStyle(BOLD);
+    textAlign(CENTER, CENTER);
+    
+    let timeStr = nf(seconds, 4, 2); // Pads to 0000.00
+    let fullText = `${label}: ${timeStr} s`;
+    
+    // Text
+    fill(col);
+    noStroke();
+    setGlow(col, 10);
+    text(fullText, x, y);
+    clearGlow();
+    
+    // Blinking Light
+    let textW = textWidth(fullText);
+    let lightX = x + (textW / 2) + 25;
+    
+    stroke(0);
+    strokeWeight(2);
+    if (isBlinking) {
+        fill(palette.green);
+        setGlow(palette.green, 10);
+    } else {
+        fill(60);
+    }
+    circle(lightX, y, 20);
+    
+    pop();
+}
+
+// --- Inputs ---
+// Continuous holding logic for smooth, beautiful flight control
+function handleInput() {
+    let accel = 0.005; // Smoother adjustment than discrete 0.1 jumps
+    if (keyIsDown(LEFT_ARROW))  vx = max(vx - accel, -0.99);
+    if (keyIsDown(RIGHT_ARROW)) vx = min(vx + accel, 0.99);
+    if (keyIsDown(UP_ARROW))    vy = max(vy - accel, -0.99);
+    if (keyIsDown(DOWN_ARROW))  vy = min(vy + accel, 0.99);
+}
+
+function keyPressed() {
+    if (key === ' ') {
+        playing = !playing;
+    } else if (key.toLowerCase() === 'r') {
+        vx = 0.0;
+        vy = 0.0;
+        earthTime = 0.0;
+        shipTime = 0.0;
+        shipWorldX = 0.0;
+        shipWorldY = 0.0;
+        planetCenter = { x: PLANET_CENTER_INIT.x, y: PLANET_CENTER_INIT.y };
+        playing = false;
+    }
+}
+</script>
+</body>
+</html>

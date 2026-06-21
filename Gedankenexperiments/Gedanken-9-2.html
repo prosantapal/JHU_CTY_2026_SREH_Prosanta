@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Faraday's Current Carrying Coils</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #030305;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+            color: white;
+        }
+        canvas {
+            box-shadow: 0 0 50px rgba(0, 0, 0, 1);
+            border-radius: 8px;
+        }
+    </style>
+</head>
+<body>
+<script>
+// --- Constants & Globals ---
+const WIDTH = 1000;
+const HEIGHT = 700;
+
+const MAGNET_WIDTH = 120;
+const MAGNET_HEIGHT = 32;
+const FORCE_K = 80000;
+
+let magnets = [];
+let selectedIdx = 0;
+let dragging = false;
+let offsetX = 0;
+let offsetY = 0;
+
+let palette;
+let magnetIdCounter = 0;
+
+function setup() {
+    createCanvas(WIDTH, HEIGHT);
+    
+    palette = {
+        bg: color(10, 12, 18),
+        copperWire: color(184, 115, 51),
+        posCharge: color(255, 60, 60),   // Neon Red
+        negCharge: color(60, 120, 255),  // Neon Blue
+        conductor: color(140, 100, 40, 70),
+        selected: color(0, 255, 100),    // Neon Green outline
+        stuck: color(255, 150, 0),       // Orange outline
+        text: color(180, 180, 200)
+    };
+
+    // Initialize Magnets
+    magnets.push(new Magnet(WIDTH * 0.2, HEIGHT * 0.33));
+    magnets.push(new Magnet(WIDTH * 0.4, HEIGHT * 0.66));
+    magnets.push(new Magnet(WIDTH * 0.6, HEIGHT * 0.33));
+    magnets.push(new Magnet(WIDTH * 0.8, HEIGHT * 0.66));
+
+    magnets[selectedIdx].selected = true;
+}
+
+// --- Native Glow Helper ---
+function setGlow(clr, blurSize) {
+    drawingContext.shadowBlur = blurSize;
+    drawingContext.shadowColor = clr.toString();
+}
+
+function clearGlow() {
+    drawingContext.shadowBlur = 0;
+}
+
+// --- Magnet Class ---
+class Magnet {
+    constructor(x, y, angle = 0, movable = true) {
+        this.id = magnetIdCounter++;
+        this.x = x;
+        this.y = y;
+        this.angle = angle;
+        this.movable = movable;
+        this.selected = false;
+        this.vx = 0;
+        this.vy = 0;
+        this.omega = 0;
+        this.stuck_to = null;
+        this.phase = 0.0;
+    }
+
+    getPoles() {
+        let dx = (MAGNET_WIDTH / 2) - 12;
+        let cosa = cos(this.angle);
+        let sina = sin(this.angle);
+        return {
+            n: { x: this.x + cosa * dx, y: this.y + sina * dx },
+            s: { x: this.x - cosa * dx, y: this.y - sina * dx }
+        };
+    }
+
+    getCorners() {
+        let hw = MAGNET_WIDTH / 2;
+        let hh = MAGNET_HEIGHT / 2;
+        let cosa = cos(this.angle);
+        let sina = sin(this.angle);
+        let corners = [];
+        
+        let offsets = [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]];
+        for (let o of offsets) {
+            corners.push({
+                x: this.x + cosa * o[0] - sina * o[1],
+                y: this.y + sina * o[0] + cosa * o[1]
+            });
+        }
+        return corners;
+    }
+
+    getRect() {
+        let corners = this.getCorners();
+        let xs = corners.map(c => c.x);
+        let ys = corners.map(c => c.y);
+        let minX = Math.min(...xs);
+        let maxX = Math.max(...xs);
+        let minY = Math.min(...ys);
+        let maxY = Math.max(...ys);
+        let w = maxX - minX;
+        let h = maxY - minY;
+        return {
+            left: minX, top: minY, 
+            right: maxX, bottom: maxY,
+            width: w, height: h,
+            centerx: minX + w / 2, centery: minY + h / 2
+        };
+    }
+
+    pointInside(px, py) {
+        let dx = px - this.x;
+        let dy = py - this.y;
+        let cosa = cos(-this.angle);
+        let sina = sin(-this.angle);
+        let rx = cosa * dx - sina * dy;
+        let ry = sina * dx + cosa * dy;
+        return (rx > -MAGNET_WIDTH/2 && rx < MAGNET_WIDTH/2 && ry > -MAGNET_HEIGHT/2 && ry < MAGNET_HEIGHT/2);
+    }
+
+    update() {
+        if (this.movable && this.stuck_to === null) {
+            this.x += this.vx;
+            this.y += this.vy;
+            this.angle += this.omega;
+            
+            // Damping (Friction)
+            this.vx *= 0.80;
+            this.vy *= 0.80;
+            this.omega *= 0.75;
+            
+            // Static friction threshold
+            if (abs(this.vx) < 0.08 && abs(this.vy) < 0.08 && abs(this.omega) < 0.008) {
+                this.vx = 0;
+                this.vy = 0;
+                this.omega = 0;
+            }
+        }
+    }
+
+    draw() {
+        push();
+        translate(this.x, this.y);
+        rotate(this.angle);
+
+        let numLoops = 5;
+        let loopRadius = MAGNET_HEIGHT * 0.38;
+        let spacing = (MAGNET_WIDTH - 32) / (numLoops - 1);
+        let centerOffset = -(MAGNET_WIDTH - 32) / 2;
+
+        // Draw faint conductor core at the ends
+        fill(palette.conductor);
+        noStroke();
+        rectMode(CENTER);
+        rect(-MAGNET_WIDTH/2 + 8, 0, 16, loopRadius * 2 + 14, 4);
+        rect(MAGNET_WIDTH/2 - 8, 0, 16, loopRadius * 2 + 14, 4);
+
+        // Draw Copper Wire Loops
+        stroke(palette.copperWire);
+        strokeWeight(3);
+        noFill();
+        for (let i = 0; i < numLoops; i++) {
+            let cx = centerOffset + i * spacing;
+            ellipse(cx, 0, loopRadius * 2, loopRadius * 2.5);
+        }
+
+        // Animate moving charges
+        this.phase += 0.08;
+        noStroke();
+        
+        for (let i = 0; i < numLoops; i++) {
+            let cx = centerOffset + i * spacing;
+            let direction = (i % 2 === 0) ? 1 : -1;
+            
+            // Draw Positive (Red) and Negative (Blue) charges
+            let charges = [
+                { sign: 1, col: palette.posCharge, offset: 0 },
+                { sign: -1, col: palette.negCharge, offset: PI }
+            ];
+            
+            for (let charge of charges) {
+                let angle = this.phase * direction + charge.offset;
+                // Path of the charge follows the elliptical coil
+                let chargeX = cx + loopRadius * cos(angle);
+                let chargeY = loopRadius * 1.25 * sin(angle); // Matches ellipse ratio
+                
+                // Only draw charges if they are on the "front" half of the coil (visual depth)
+                if (sin(angle) > 0) {
+                    setGlow(charge.col, 10);
+                    fill(charge.col);
+                    circle(chargeX, chargeY, 7);
+                    clearGlow();
+                }
+            }
+        }
+
+        // Highlight Outlines
+        if (this.stuck_to !== null) {
+            noFill();
+            stroke(palette.stuck);
+            strokeWeight(2);
+            setGlow(palette.stuck, 15);
+            rectMode(CENTER);
+            rect(0, 0, MAGNET_WIDTH + 4, MAGNET_HEIGHT + 15, 6);
+            clearGlow();
+        } else if (this.selected) {
+            noFill();
+            stroke(palette.selected);
+            strokeWeight(2);
+            setGlow(palette.selected, 15);
+            rectMode(CENTER);
+            rect(0, 0, MAGNET_WIDTH + 4, MAGNET_HEIGHT + 15, 6);
+            clearGlow();
+        }
+
+        pop();
+    }
+}
+
+// --- Physics Functions ---
+function poleForce(posFrom, posTo, sign) {
+    let dx = posTo.x - posFrom.x;
+    let dy = posTo.y - posFrom.y;
+    let distSq = dx * dx + dy * dy;
+    if (distSq < 100) distSq = 100; // Prevent infinite force
+    
+    let forceMag = (FORCE_K * sign) / distSq;
+    let angle = atan2(dy, dx);
+    
+    return {
+        fx: forceMag * cos(angle),
+        fy: forceMag * sin(angle)
+    };
+}
+
+function magnetsInteract(controlled, free) {
+    if (controlled.stuck_to === free.id || free.stuck_to === controlled.id) return;
+    
+    let poles1 = controlled.getPoles();
+    let poles2 = free.getPoles();
+    
+    let forceX = 0;
+    let forceY = 0;
+    let torque = 0;
+    
+    let pairs = [
+        [poles1.n, poles2.n, 1],
+        [poles1.s, poles2.n, -1],
+        [poles1.n, poles2.s, -1],
+        [poles1.s, poles2.s, 1]
+    ];
+    
+    for (let pair of pairs) {
+        let f = poleForce(pair[0], pair[1], pair[2]);
+        forceX += f.fx;
+        forceY += f.fy;
+        
+        let rx = pair[1].x - free.x;
+        let ry = pair[1].y - free.y;
+        torque += rx * f.fy - ry * f.fx;
+    }
+    
+    free.vx += forceX * 0.01;
+    free.vy += forceY * 0.01;
+    free.omega += torque * 0.00015;
+}
+
+function rectCollision(mag1, mag2) {
+    let r1 = mag1.getRect();
+    let r2 = mag2.getRect();
+    return !(r1.right < r2.left || r1.left > r2.right || r1.bottom < r2.top || r1.top > r2.bottom);
+}
+
+function resolveCollision(moving, fixed) {
+    let r1 = moving.getRect();
+    let r2 = fixed.getRect();
+    
+    let dx = r1.centerx - r2.centerx;
+    let dy = r1.centery - r2.centery;
+    
+    let overlapX = (r1.width / 2 + r2.width / 2) - abs(dx);
+    let overlapY = (r1.height / 2 + r2.height / 2) - abs(dy);
+    
+    if (overlapX < overlapY) {
+        moving.x += (dx > 0) ? overlapX : -overlapX;
+        moving.vx = 0;
+    } else {
+        moving.y += (dy > 0) ? overlapY : -overlapY;
+        moving.vy = 0;
+    }
+}
+
+function keepInsideScreen(mag) {
+    let r = mag.getRect();
+    let dx = 0, dy = 0;
+    
+    if (r.left < 0) dx = -r.left;
+    else if (r.right > WIDTH) dx = WIDTH - r.right;
+    
+    if (r.top < 0) dy = -r.top;
+    else if (r.bottom > HEIGHT) dy = HEIGHT - r.bottom;
+    
+    if (dx !== 0 || dy !== 0) {
+        mag.x += dx;
+        mag.y += dy;
+        if (dx !== 0) mag.vx = 0;
+        if (dy !== 0) mag.vy = 0;
+    }
+}
+
+function trySnapMagnets() {
+    for (let i = 0; i < magnets.length; i++) {
+        for (let j = i + 1; j < magnets.length; j++) {
+            let m1 = magnets[i];
+            let m2 = magnets[j];
+            
+            if (m1.stuck_to !== null || m2.stuck_to !== null) continue;
+            
+            let poles1 = m1.getPoles();
+            let poles2 = m2.getPoles();
+            
+            let pairs = [
+                [poles1.n, poles2.s],
+                [poles1.s, poles2.n]
+            ];
+            
+            for (let pair of pairs) {
+                let dx = pair[0].x - pair[1].x;
+                let dy = pair[0].y - pair[1].y;
+                let dist2 = dx * dx + dy * dy;
+                
+                if (dist2 < 200) {
+                    let mx = (m1.x + m2.x) / 2.0;
+                    let my = (m1.y + m2.y) / 2.0;
+                    
+                    m1.x = m2.x = mx;
+                    m1.y = m2.y = my;
+                    
+                    let avgAngle = (m1.angle + m2.angle + Math.PI) / 2.0;
+                    m1.angle = avgAngle;
+                    m2.angle = avgAngle + Math.PI;
+                    
+                    m1.vx = m1.vy = m1.omega = 0;
+                    m2.vx = m2.vy = m2.omega = 0;
+                    
+                    m1.stuck_to = m2.id;
+                    m2.stuck_to = m1.id;
+                }
+            }
+        }
+    }
+}
+
+function unstickIfMoved() {
+    for (let m of magnets) {
+        if (m.stuck_to !== null && m.selected && dragging) {
+            let stuckId = m.stuck_to;
+            m.stuck_to = null;
+            let partner = magnets.find(mag => mag.id === stuckId);
+            if (partner) partner.stuck_to = null;
+        }
+    }
+}
+
+// --- Main Draw Loop ---
+function draw() {
+    background(palette.bg);
+
+    // 1. Handle Dragging
+    if (dragging) {
+        let selMag = magnets[selectedIdx];
+        selMag.x = mouseX - offsetX;
+        selMag.y = mouseY - offsetY;
+    }
+
+    // 2. Unstick logic
+    unstickIfMoved();
+
+    // 3. Magnetic Forces interaction
+    for (let i = 0; i < magnets.length; i++) {
+        let magFree = magnets[i];
+        if (i !== selectedIdx && magFree.stuck_to === null) {
+            for (let j = 0; j < magnets.length; j++) {
+                let magCtrl = magnets[j];
+                if (i !== j && magCtrl.stuck_to === null) {
+                    magnetsInteract(magCtrl, magFree);
+                }
+            }
+        }
+    }
+
+    // 4. Update Kinematics
+    for (let i = 0; i < magnets.length; i++) {
+        if (!(i === selectedIdx && dragging)) {
+            magnets[i].update();
+        }
+    }
+
+    // 5. Hard Collisions (AABB)
+    for (let i = 0; i < magnets.length; i++) {
+        for (let j = i + 1; j < magnets.length; j++) {
+            if (rectCollision(magnets[i], magnets[j])) {
+                if (i !== selectedIdx && (j === selectedIdx || i < j)) {
+                    resolveCollision(magnets[i], magnets[j]);
+                } else if (j !== selectedIdx) {
+                    resolveCollision(magnets[j], magnets[i]);
+                }
+            }
+        }
+    }
+
+    // 6. Screen Constraints
+    magnets.forEach(m => keepInsideScreen(m));
+
+    // 7. Snap Check
+    trySnapMagnets();
+
+    // 8. Render
+    magnets.forEach(m => m.draw());
+
+    // 9. Draw Instructions
+    drawInstructions();
+}
+
+function drawInstructions() {
+    fill(palette.text);
+    noStroke();
+    textSize(14);
+    textAlign(LEFT, TOP);
+    let lines = [
+        "[TAB]: Switch magnet | [←]/[→]: Rotate | Drag: Move selected magnet",
+        "Selected magnet has a Green outline. Orange outline = Stuck to another magnet.",
+        "Magnets exert realistic inverse-square attraction, repulsion, and torque.",
+        "Magnets SNAP when aligned N-S. Drag a stuck magnet rapidly to rip them apart."
+    ];
+    for (let i = 0; i < lines.length; i++) {
+        text(lines[i], 20, 20 + i * 22);
+    }
+}
+
+// --- Inputs ---
+function mousePressed() {
+    for (let i = magnets.length - 1; i >= 0; i--) {
+        let m = magnets[i];
+        if (m.pointInside(mouseX, mouseY)) {
+            if (selectedIdx !== i) {
+                magnets[selectedIdx].selected = false;
+                selectedIdx = i;
+                magnets[selectedIdx].selected = true;
+            }
+            dragging = true;
+            offsetX = mouseX - m.x;
+            offsetY = mouseY - m.y;
+            break;
+        }
+    }
+}
+
+function mouseReleased() {
+    dragging = false;
+}
+
+function keyPressed() {
+    if (keyCode === TAB) {
+        magnets[selectedIdx].selected = false;
+        selectedIdx = (selectedIdx + 1) % magnets.length;
+        magnets[selectedIdx].selected = true;
+        return false; // Prevent default tab behavior
+    }
+    
+    if (keyCode === LEFT_ARROW) {
+        magnets[selectedIdx].angle -= PI / 16;
+    } else if (keyCode === RIGHT_ARROW) {
+        magnets[selectedIdx].angle += PI / 16;
+    }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Galileo's Cosmic Telescope Simulation</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #020205; /* Deep space black */
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+        }
+        canvas {
+            box-shadow: 0 0 50px rgba(100, 150, 255, 0.2), 0 0 15px rgba(0,0,0,1);
+            border-radius: 8px;
+            cursor: crosshair;
+        }
+    </style>
+</head>
+<body>
+<script>
+// Screen dimensions
+const WIDTH = 800;
+const HEIGHT = 600;
+
+// Colors
+let palette;
+
+// Environment
+let stars = [];
+let shootingStars = [];
+let lastShootingStarTime = 0;
+let shootingStarInterval = 2000; // milliseconds
+
+// Celestial Objects
+let sun, jupiter, venus, saturn, moon;
+
+// Telescope
+let telescope = {
+    on: false,
+    x: WIDTH / 2,
+    y: HEIGHT / 2,
+    targetX: WIDTH / 2,
+    targetY: HEIGHT / 2,
+    radius: 150
+};
+
+// UI
+let buttonRect;
+
+function setup() {
+    createCanvas(WIDTH, HEIGHT);
+    
+    palette = {
+        sun: color(255, 220, 50),
+        jupiter: color(220, 80, 50),
+        venus: color(50, 255, 150),
+        saturn: color(230, 200, 140),
+        moon: color(210, 210, 215),
+        glass: color(100, 150, 255, 20),
+        glassRim: color(100, 150, 255, 150),
+        white: color(255),
+        black: color(5, 5, 10)
+    };
+
+    // Initialize Background Stars
+    for (let i = 0; i < 250; i++) {
+        stars.push({
+            x: random(WIDTH),
+            y: random(HEIGHT),
+            size: random(0.5, 2.5),
+            brightness: random(100, 255),
+            twinkleOffset: random(TWO_PI)
+        });
+    }
+
+    // Galileo's Discovery: The Pleiades (Dense Star Cluster)
+    // Naked eye sees a blur, telescope reveals many stars
+    let clusterCenterX = WIDTH * 0.85;
+    let clusterCenterY = HEIGHT * 0.15;
+    for (let i = 0; i < 60; i++) {
+        let angle = random(TWO_PI);
+        let r = random(2, 35); // Tightly packed
+        stars.push({
+            x: clusterCenterX + cos(angle) * r,
+            y: clusterCenterY + sin(angle) * r,
+            size: random(0.5, 1.2), // Fainter than normal stars
+            brightness: random(80, 180),
+            twinkleOffset: random(TWO_PI)
+        });
+    }
+
+    // Initialize Celestial Bodies
+    sun = {
+        x: WIDTH * 0.25, y: HEIGHT * 0.25, size: 20, color: palette.sun,
+        spots: Array.from({length: 6}, () => ({
+            dx: random(-0.6, 0.6), dy: random(-0.6, 0.6), r: random(0.1, 0.2)
+        }))
+    };
+
+    // Galileo's Discovery: The Moon is not a perfect sphere
+    moon = {
+        x: WIDTH * 0.45, y: HEIGHT * 0.15, size: 14, color: palette.moon,
+        craters: Array.from({length: 12}, () => ({
+            dx: random(-0.7, 0.7), dy: random(-0.7, 0.7), r: random(0.08, 0.25)
+        }))
+    };
+
+    jupiter = {
+        x: WIDTH * 0.15, y: HEIGHT * 0.75, size: 8, color: palette.jupiter,
+        moons: [
+            { dist: 12, angle: 0, speed: 0.03, size: 1.5 },
+            { dist: 18, angle: PI, speed: 0.015, size: 2.5 },
+            { dist: 24, angle: HALF_PI, speed: 0.02, size: 1.0 },
+            { dist: 32, angle: QUARTER_PI, speed: 0.01, size: 1.2 } // Added 4th Galilean moon!
+        ]
+    };
+
+    venus = {
+        x: WIDTH * 0.70, y: HEIGHT * 0.35, size: 6, color: palette.venus,
+        cycleDuration: 10000 // 10 seconds for a full phase cycle
+    };
+
+    saturn = {
+        x: WIDTH * 0.8, y: HEIGHT * 0.7, size: 7, color: palette.saturn,
+        ringOuter: 18, ringInner: 11, tilt: PI / 6
+    };
+
+    buttonRect = {
+        w: 220, h: 50,
+        x: (WIDTH - 220) / 2, y: HEIGHT - 70
+    };
+}
+
+// --- Helper Functions ---
+function setGlow(clr, blurSize) {
+    drawingContext.shadowBlur = blurSize;
+    drawingContext.shadowColor = clr.toString();
+}
+
+function clearGlow() {
+    drawingContext.shadowBlur = 0;
+}
+
+// Fisheye distortion scaling
+function calculateScaleFactor(dist) {
+    if (dist >= telescope.radius) return 1.0;
+    let progress = dist / telescope.radius;
+    return 0.15 + 0.85 * Math.pow(progress, 2);
+}
+
+function draw() {
+    background(palette.black);
+    let t = millis();
+
+    // Smooth telescope mouse tracking
+    if (telescope.on) {
+        telescope.targetX = mouseX;
+        telescope.targetY = mouseY;
+        telescope.x = lerp(telescope.x, telescope.targetX, 0.1);
+        telescope.y = lerp(telescope.y, telescope.targetY, 0.1);
+    }
+
+    // 1. Draw Stars
+    noStroke();
+    stars.forEach(star => {
+        let twinkle = sin(t * 0.002 + star.twinkleOffset);
+        let alpha = star.brightness * (0.7 + 0.3 * twinkle);
+        fill(255, 255, 255, alpha);
+        
+        let drawX = star.x;
+        let drawY = star.y;
+        let drawSize = star.size;
+
+        if (telescope.on) {
+            let dx = star.x - telescope.x;
+            let dy = star.y - telescope.y;
+            let dist = sqrt(dx*dx + dy*dy);
+            if (dist <= telescope.radius) {
+                let scale = calculateScaleFactor(dist);
+                drawX = telescope.x + dx * scale;
+                drawY = telescope.y + dy * scale;
+                drawSize = star.size / scale;
+            }
+        }
+        circle(drawX, drawY, drawSize);
+    });
+
+    // 2. Shooting Stars
+    if (t - lastShootingStarTime > shootingStarInterval) {
+        spawnShootingStar();
+        lastShootingStarTime = t;
+        shootingStarInterval = random(1000, 5000); 
+    }
+    updateAndDrawShootingStars();
+
+    // 3. Draw Planets & Moon
+    drawPlanet(sun, drawSunDetails);
+    drawPlanet(moon, drawMoonDetails);
+    drawPlanet(venus, drawVenusDetails);
+    drawPlanet(jupiter, drawJupiterDetails);
+    drawPlanet(saturn, drawSaturnDetails);
+
+    // 4. Draw Telescope Glass Overlay
+    if (telescope.on) {
+        push();
+        translate(telescope.x, telescope.y);
+        
+        fill(palette.glass);
+        noStroke();
+        circle(0, 0, telescope.radius * 2);
+
+        noFill();
+        stroke(palette.glassRim);
+        strokeWeight(2);
+        setGlow(palette.glassRim, 15);
+        circle(0, 0, telescope.radius * 2);
+        
+        stroke(100, 150, 255, 50);
+        strokeWeight(1);
+        line(-20, 0, 20, 0);
+        line(0, -20, 0, 20);
+        
+        clearGlow();
+        pop();
+    }
+
+    // 5. UI Button
+    drawButton();
+}
+
+// --- Planet Rendering Logic ---
+function drawPlanet(planetData, detailFunction) {
+    let dx = planetData.x - telescope.x;
+    let dy = planetData.y - telescope.y;
+    let distance = sqrt(dx*dx + dy*dy);
+    
+    let drawX = planetData.x;
+    let drawY = planetData.y;
+    let drawSize = planetData.size;
+    let magnified = false;
+
+    if (telescope.on && distance <= telescope.radius) {
+        let scale = calculateScaleFactor(distance);
+        drawX = telescope.x + dx * scale;
+        drawY = telescope.y + dy * scale;
+        drawSize = planetData.size / scale;
+        magnified = distance <= telescope.radius * 0.8; 
+    }
+
+    push();
+    translate(drawX, drawY);
+    detailFunction(planetData, drawSize, magnified);
+    pop();
+}
+
+function drawSunDetails(data, size, magnified) {
+    setGlow(data.color, size * 1.5);
+    fill(data.color);
+    noStroke();
+    circle(0, 0, size * 2);
+    clearGlow();
+
+    if (magnified) {
+        fill(200, 100, 0, 150);
+        data.spots.forEach(spot => {
+            circle(spot.dx * size, spot.dy * size, spot.r * size * 2);
+        });
+    }
+}
+
+function drawMoonDetails(data, size, magnified) {
+    setGlow(data.color, size * 0.5);
+    fill(data.color);
+    noStroke();
+    circle(0, 0, size * 2);
+    clearGlow();
+
+    if (magnified) {
+        // Draw Craters
+        data.craters.forEach(crater => {
+            let cx = crater.dx * size;
+            let cy = crater.dy * size;
+            let cr = crater.r * size;
+            
+            // Crater shadow
+            fill(120, 120, 130, 200);
+            circle(cx, cy, cr * 2);
+            // Crater highlight (gives it depth)
+            fill(240, 240, 245, 150);
+            circle(cx + cr*0.3, cy + cr*0.3, cr * 1.5);
+        });
+    }
+}
+
+function drawVenusDetails(data, size, magnified) {
+    setGlow(data.color, size);
+    fill(data.color);
+    noStroke();
+    circle(0, 0, size * 2);
+    clearGlow();
+
+    if (magnified) {
+        let phaseProgress = (millis() % data.cycleDuration) / data.cycleDuration;
+        let phase = 0.5 * (1 + cos(TWO_PI * phaseProgress)); 
+        
+        if (phase < 0.95) {
+            fill(palette.black);
+            let offset = size * (1 - phase) * 2;
+            circle(offset, 0, size * 2.1); 
+        }
+    }
+}
+
+function drawJupiterDetails(data, size, magnified) {
+    setGlow(data.color, size);
+    fill(data.color);
+    noStroke();
+    circle(0, 0, size * 2);
+    
+    if(magnified) {
+        fill(150, 50, 30, 100);
+        rect(-size*0.8, -size*0.3, size*1.6, size*0.2, 5);
+        rect(-size*0.9, size*0.1, size*1.8, size*0.2, 5);
+    }
+    clearGlow();
+
+    if (magnified) {
+        let scaleFactor = size / data.size;
+        fill(255);
+        data.moons.forEach(moon => {
+            moon.angle += moon.speed;
+            let mDist = moon.dist * scaleFactor;
+            let mSize = moon.size * scaleFactor;
+            let mx = cos(moon.angle) * mDist;
+            let my = sin(moon.angle) * mDist * 0.2; 
+            
+            if (sin(moon.angle) > 0 || abs(mx) > size) {
+                setGlow(color(255), 5);
+                circle(mx, my, mSize * 2);
+                clearGlow();
+            }
+        });
+    }
+}
+
+function drawSaturnDetails(data, size, magnified) {
+    if (magnified) drawSaturnRings(data, size, true);
+
+    setGlow(data.color, size);
+    fill(data.color);
+    noStroke();
+    circle(0, 0, size * 2);
+    clearGlow();
+
+    if (magnified) drawSaturnRings(data, size, false);
+}
+
+function drawSaturnRings(data, size, drawBackHalf) {
+    let scaleFactor = size / data.size;
+    let outer = data.ringOuter * scaleFactor;
+    let inner = data.ringInner * scaleFactor;
+    
+    push();
+    rotate(data.tilt);
+    noFill();
+    
+    let startAngle = drawBackHalf ? PI : 0;
+    let endAngle = drawBackHalf ? TWO_PI : PI;
+    
+    for(let r = inner; r <= outer; r += 1) {
+        let alpha = map(r, inner, outer, 255, 50);
+        stroke(200, 180, 150, alpha);
+        strokeWeight(2);
+        arc(0, 0, r * 2, r * 0.6, startAngle, endAngle);
+    }
+    pop();
+}
+
+// --- Shooting Stars ---
+function spawnShootingStar() {
+    let side = floor(random(4));
+    let x, y;
+    
+    if (side === 0) { x = random(WIDTH); y = 0; }
+    else if (side === 1) { x = WIDTH; y = random(HEIGHT); }
+    else if (side === 2) { x = random(WIDTH); y = HEIGHT; }
+    else { x = 0; y = random(HEIGHT); }
+
+    let targetX = random(WIDTH);
+    let targetY = random(HEIGHT);
+    let angle = atan2(targetY - y, targetX - x);
+
+    shootingStars.push({
+        x: x, y: y,
+        vx: cos(angle), vy: sin(angle),
+        speed: random(10, 20),
+        size: random(1.5, 3),
+        life: 255,
+        history: []
+    });
+}
+
+function updateAndDrawShootingStars() {
+    blendMode(ADD);
+    for (let i = shootingStars.length - 1; i >= 0; i--) {
+        let star = shootingStars[i];
+        
+        star.history.push({x: star.x, y: star.y});
+        if (star.history.length > 15) star.history.shift();
+
+        star.x += star.vx * star.speed;
+        star.y += star.vy * star.speed;
+        star.life -= 5;
+
+        if (star.life <= 0) {
+            shootingStars.splice(i, 1);
+            continue;
+        }
+
+        noFill();
+        for (let j = 0; j < star.history.length; j++) {
+            let pos = star.history[j];
+            let alpha = map(j, 0, star.history.length, 0, star.life);
+            stroke(255, 255, 255, alpha);
+            strokeWeight(star.size * map(j, 0, star.history.length, 0.1, 1));
+            if (j > 0) {
+                let prev = star.history[j - 1];
+                line(prev.x, prev.y, pos.x, pos.y);
+            }
+        }
+        
+        noStroke();
+        fill(255, 255, 255, star.life);
+        setGlow(color(255), 10);
+        circle(star.x, star.y, star.size * 2);
+        clearGlow();
+    }
+    blendMode(BLEND);
+}
+
+// --- UI Logic ---
+function drawButton() {
+    let hover = mouseX > buttonRect.x && mouseX < buttonRect.x + buttonRect.w &&
+                mouseY > buttonRect.y && mouseY < buttonRect.y + buttonRect.h;
+
+    push();
+    translate(buttonRect.x, buttonRect.y);
+    
+    fill(20, 25, 35, 200);
+    stroke(hover ? palette.glassRim : color(80, 80, 100));
+    strokeWeight(2);
+    rect(0, 0, buttonRect.w, buttonRect.h, 10);
+
+    fill(palette.white);
+    noStroke();
+    textAlign(CENTER, CENTER);
+    textSize(18);
+    textStyle(BOLD);
+    text(telescope.on ? "TURN OFF TELESCOPE" : "TURN ON TELESCOPE", buttonRect.w / 2, buttonRect.h / 2 - 2);
+    
+    pop();
+}
+
+function mousePressed() {
+    if (mouseX > buttonRect.x && mouseX < buttonRect.x + buttonRect.w &&
+        mouseY > buttonRect.y && mouseY < buttonRect.y + buttonRect.h) {
+        telescope.on = !telescope.on;
+        if(telescope.on) {
+            telescope.x = mouseX;
+            telescope.y = mouseY;
+        }
+    }
+}
+</script>
+</body>
+</html>

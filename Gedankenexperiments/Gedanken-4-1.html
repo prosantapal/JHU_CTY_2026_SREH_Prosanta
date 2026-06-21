@@ -1,0 +1,766 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reference Frame Mystery</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #030305;
+            font-family: 'Segoe UI', sans-serif;
+            overflow: hidden;
+            color: white;
+        }
+        canvas {
+            box-shadow: 0 0 40px rgba(0, 0, 0, 1);
+            border-radius: 8px;
+        }
+    </style>
+</head>
+<body>
+<script>
+// --- Global Constants & State ---
+const WIDTH = 800;
+const HEIGHT = 600;
+
+let palette;
+let spaceships = [];
+let buttons = [];
+let motionMenuButtons = [];
+
+// Game State
+let trailMode = false;
+let zoomMode = false;
+const ZOOM_FACTOR = 6;
+let gameSolved = false;
+let guessesMade = 0;
+const MAX_GUESSES = 10;
+
+// Selections
+let selectedSprite = -1; // -1 means absolute frame
+let selectedSpriteForGuess = -1;
+let frozenReferencePositions = null;
+
+// Passcode Feature
+let inputtingPasscode = false;
+let passcodeSoFar = "";
+const REVEAL_PASSCODE = "1245";
+let revealAnswers = false;
+
+// --- Helper Functions ---
+// Safe modulo for JavaScript (handles negative numbers like Python)
+function mod(n, m) {
+    return ((n % m) + m) % m;
+}
+
+function setGlow(clr, blurSize) {
+    drawingContext.shadowBlur = blurSize;
+    drawingContext.shadowColor = clr.toString();
+}
+
+function clearGlow() {
+    drawingContext.shadowBlur = 0;
+}
+
+function setup() {
+    createCanvas(WIDTH, HEIGHT);
+    
+    palette = {
+        bg: color(5, 5, 10),
+        white: color(255),
+        black: color(0),
+        green: color(0, 255, 0),
+        yellow: color(255, 255, 0),
+        red: color(255, 50, 50),
+        gray: color(50, 50, 60),
+        blue: color(50, 100, 255),
+        purple: color(180, 50, 255),
+        orange: color(255, 165, 0),
+        cyan: color(0, 255, 255),
+        pink: color(255, 100, 200),
+        lime: color(150, 255, 50),
+        uiBg: color(20, 25, 30, 220)
+    };
+
+    createSpaceships();
+    setupUI();
+    
+    // Select a random starting frame
+    selectedSprite = floor(random(spaceships.length));
+    
+    background(palette.bg);
+}
+
+function createSpaceships() {
+    let allMotions = [
+        "uniform_lr", "uniform_bt", "uniform_diagonal", "circular",
+        "sinusoidal", "triangle", "figure_eight", "stationary"
+    ];
+    let mustHave = ["circular", "uniform_lr", "uniform_bt"];
+    let others = allMotions.filter(m => !mustHave.includes(m));
+    
+    // Shuffle others and pick 4
+    others.sort(() => random() - 0.5);
+    let chosen = mustHave.concat(others.slice(0, 4));
+    chosen.sort(() => random() - 0.5);
+    
+    let colors = [palette.green, palette.yellow, palette.red, palette.blue, 
+                  palette.purple, palette.orange, palette.cyan, palette.pink, palette.lime];
+    colors.sort(() => random() - 0.5);
+    
+    let positions = [
+        {x: 120, y: 130}, {x: 340, y: 130}, {x: 560, y: 130},
+        {x: 200, y: 300}, {x: 420, y: 300},
+        {x: 120, y: 470}, {x: 560, y: 470}
+    ];
+
+    for (let i = 0; i < chosen.length; i++) {
+        spaceships.push(new Sprite(positions[i].x, positions[i].y, chosen[i], colors[i], `Ship ${String.fromCharCode(65 + i)}`));
+    }
+}
+
+function setupUI() {
+    let bw = 60, bh = 40, ts = 40, ms = 45, pad = 12, spc = 8;
+    let totalW = (bw * spaceships.length) + ts + ms + (spc * (spaceships.length + 1));
+    let cw = totalW + pad * 2;
+    let ch = bh + pad * 2;
+    let cx = (WIDTH - cw) / 2;
+    let cy = HEIGHT - ch - 20;
+
+    buttons = [];
+    
+    // Ship buttons
+    for (let i = 0; i < spaceships.length; i++) {
+        buttons.push({
+            x: cx + pad + i * (bw + spc), y: cy + pad, w: bw, h: bh, 
+            color: spaceships[i].color, label: spaceships[i].name, type: 'ship', id: i
+        });
+    }
+    
+    // Trail button
+    let trailX = cx + pad + spaceships.length * (bw + spc);
+    buttons.push({
+        x: trailX, y: cy + pad, w: ts, h: ts, 
+        color: palette.red, type: 'triangle'
+    });
+    
+    // Zoom button
+    let zoomX = trailX + ts + spc;
+    buttons.push({
+        x: zoomX, y: cy + pad, w: ms, h: ms, 
+        color: palette.gray, type: 'zoom'
+    });
+
+    // Console Box bounds for drawing
+    buttons.console = {x: cx, y: cy, w: cw, h: ch};
+}
+
+// --- Main Loop ---
+function draw() {
+    // Handle Trails
+    if (!trailMode) {
+        background(palette.bg);
+    } else {
+        noStroke();
+        fill(5, 5, 10, 25); 
+        rect(0, 0, WIDTH, HEIGHT);
+    }
+
+    // Update Physics
+    spaceships.forEach(s => s.update());
+
+    // Get Reference Coordinates
+    let refX = 0, refY = 0;
+    if (selectedSprite !== -1) {
+        let refShip = spaceships[selectedSprite];
+        refX = refShip.x;
+        refY = refShip.y;
+    }
+
+    // Draw Spaceships
+    spaceships.forEach((s, i) => {
+        if (zoomMode) {
+            if (i === selectedSprite) s.draw(refX, refY, true);
+        } else {
+            s.draw(refX, refY, false);
+        }
+    });
+
+    // Draw UI Elements (Always fully opaque on top of trails)
+    drawGameInfo();
+    drawConsole();
+    
+    if (selectedSpriteForGuess !== -1) {
+        drawMotionMenu();
+    }
+
+    if (inputtingPasscode) {
+        drawPasscodeScreen();
+    }
+
+    if (revealAnswers) {
+        drawAnswers(refX, refY);
+    }
+
+    if (gameSolved || guessesMade >= MAX_GUESSES) {
+        drawGameOver();
+    }
+}
+
+// --- Physics & Sprite Class ---
+class Sprite {
+    constructor(x, y, motionType, col, name) {
+        this.x = x; this.y = y;
+        this.motionType = motionType;
+        this.color = col;
+        this.name = name;
+        this.origRadius = 20;
+        this.radius = 20;
+        this.speed = 2;
+        this.angle = 0;
+        this.velocity = {x: 0, y: 0};
+        this.acceleration = {x: 0, y: 0};
+        this.dirTimer = 0;
+        this.dir = 1;
+        this.triProgress = 0;
+        this.fig8Time = 0;
+        this.smallObjects = [];
+        this.guessedMotion = null;
+
+        let offset = this.radius * 0.25;
+        this.addSmallObject(x + offset, y);
+        this.addSmallObject(x - offset, y + offset);
+    }
+
+    addSmallObject(x, y) {
+        let relX = x - this.x;
+        let relY = y - this.y;
+        let dist = hypot(relX, relY);
+        let maxAllowed = this.radius - (this.origRadius / 15) - 2;
+        
+        if (dist > maxAllowed) {
+            let a = dist > 0 ? atan2(relY, relX) : random(TWO_PI);
+            x = this.x + maxAllowed * cos(a);
+            y = this.y + maxAllowed * sin(a);
+        }
+        
+        this.smallObjects.push({
+            x: x, y: y,
+            radius: Math.max(2, this.origRadius / 8),
+            vx: 0, vy: 0,
+            relX: x - this.x,
+            relY: y - this.y
+        });
+        return true;
+    }
+
+    constrainToShip(obj) {
+        let nonInertial = ["circular", "oscillating", "sinusoidal", "triangle", "figure_eight"];
+        if (!nonInertial.includes(this.motionType)) {
+            obj.x = this.x + obj.relX;
+            obj.y = this.y + obj.relY;
+            return false;
+        }
+        
+        let relX = obj.x - this.x;
+        let relY = obj.y - this.y;
+        let dist = hypot(relX, relY);
+        let maxDist = this.radius - obj.radius - 1;
+        
+        if (dist > maxDist) {
+            let a = atan2(relY, relX);
+            obj.x = this.x + maxDist * cos(a);
+            obj.y = this.y + maxDist * sin(a);
+            return true;
+        }
+        return false;
+    }
+
+    updateCollisions() {
+        let nonInertial = ["circular", "oscillating", "sinusoidal", "triangle", "figure_eight"];
+        if (!nonInertial.includes(this.motionType)) return;
+
+        this.smallObjects.forEach(obj => {
+            obj.x += obj.vx;
+            obj.y += obj.vy;
+            this.constrainToShip(obj);
+            
+            let relX = obj.x - this.x;
+            let relY = obj.y - this.y;
+            let dist = hypot(relX, relY);
+            
+            if (dist > 0) {
+                if (this.motionType === "circular") {
+                    let angVel = 0.02;
+                    let centForce = (angVel * angVel) * dist * 0.1;
+                    let dir = atan2(relY, relX);
+                    obj.vx += centForce * cos(dir);
+                    obj.vy += centForce * sin(dir);
+                } else {
+                    // Inertial lag
+                    obj.vx -= this.acceleration.x * 0.5;
+                    obj.vy -= this.acceleration.y * 0.5;
+                }
+                
+                // Friction
+                obj.vx *= 0.995;
+                obj.vy *= 0.995;
+            }
+            
+            // Wall bounce
+            if (dist > this.radius - obj.radius - 0.1) {
+                let nx = dist > 0 ? relX / dist : cos(random(TWO_PI));
+                let ny = dist > 0 ? relY / dist : sin(random(TWO_PI));
+                let vDotN = obj.vx * nx + obj.vy * ny;
+                
+                if (vDotN < 0) {
+                    obj.vx -= 1.8 * vDotN * nx;
+                    obj.vy -= 1.8 * vDotN * ny;
+                    let spd = hypot(obj.vx, obj.vy);
+                    if (spd > 5) {
+                        obj.vx *= (5 / spd);
+                        obj.vy *= (5 / spd);
+                    }
+                }
+            }
+        });
+
+        // Object-to-object collisions
+        for (let i = 0; i < this.smallObjects.length; i++) {
+            for (let j = i + 1; j < this.smallObjects.length; j++) {
+                let o1 = this.smallObjects[i];
+                let o2 = this.smallObjects[j];
+                let dx = o2.x - o1.x;
+                let dy = o2.y - o1.y;
+                let dist = hypot(dx, dy);
+                let minDist = o1.radius + o2.radius;
+                
+                if (dist > 0 && dist < minDist) {
+                    let nx = dx / dist, ny = dy / dist;
+                    let dvx = o2.vx - o1.vx, dvy = o2.vy - o1.vy;
+                    let vDotN = dvx * nx + dvy * ny;
+                    
+                    if (vDotN < 0) {
+                        let impulse = -1.5 * vDotN / (1/o1.radius + 1/o2.radius);
+                        o1.vx -= impulse * nx / o1.radius;
+                        o1.vy -= impulse * ny / o1.radius;
+                        o2.vx += impulse * nx / o2.radius;
+                        o2.vy += impulse * ny / o2.radius;
+                        
+                        let corr = (minDist - dist) * 0.5;
+                        o1.x -= corr * nx; o1.y -= corr * ny;
+                        o2.x += corr * nx; o2.y += corr * ny;
+                    }
+                }
+            }
+        }
+    }
+
+    update() {
+        let spd = ["uniform_lr", "uniform_bt", "uniform_diagonal"].includes(this.motionType) ? this.speed * 0.5 : this.speed;
+        this.acceleration = {x: 0, y: 0};
+        
+        // Calculate new velocity/acceleration based on absolute motion
+        if (this.motionType === "uniform_lr") {
+            this.velocity = {x: spd, y: 0};
+        } else if (this.motionType === "uniform_bt") {
+            this.velocity = {x: 0, y: -spd};
+        } else if (this.motionType === "uniform_diagonal") {
+            this.velocity = {x: spd, y: -spd};
+        } else if (this.motionType === "circular") {
+            this.angle += 0.02;
+            this.velocity = {x: -100 * sin(this.angle) * 0.02, y: 100 * cos(this.angle) * 0.02};
+        } else if (this.motionType === "oscillating") {
+            this.dirTimer++;
+            if (this.dirTimer >= 60) { this.dir *= -1; this.dirTimer = 0; }
+            this.acceleration.x = 0.1 * this.dir;
+            this.velocity.x += this.acceleration.x;
+            let currentSpd = abs(this.velocity.x);
+            if (currentSpd > 3) this.velocity.x *= (3/currentSpd);
+        } else if (this.motionType === "sinusoidal") {
+            this.angle += 0.05;
+            this.acceleration.y = 0.15 * sin(this.angle);
+            this.velocity.y += this.acceleration.y;
+            let currentSpd = abs(this.velocity.y);
+            if (currentSpd > 2.5) this.velocity.y *= (2.5/currentSpd);
+        } else if (this.motionType === "triangle") {
+            this.triProgress += 0.01;
+            let size = 80;
+            let pts = [{x:0, y:-size}, {x: size*0.866, y: size*0.5}, {x: -size*0.866, y: size*0.5}];
+            let side = Math.floor(this.triProgress) % 3;
+            let p = this.triProgress % 1;
+            let start = pts[side], end = pts[(side+1)%3];
+            let tx = start.x + (end.x - start.x) * p;
+            let ty = start.y + (end.y - start.y) * p;
+            let bx = 200 + 150 * cos(this.triProgress * 0.1);
+            let by = 200 + 150 * sin(this.triProgress * 0.1);
+            this.velocity.x = (bx + tx - this.x) * 0.1;
+            this.velocity.y = (by + ty - this.y) * 0.1;
+            this.acceleration = {x: this.velocity.x * 0.1, y: this.velocity.y * 0.1}; // rough approx
+        } else if (this.motionType === "figure_eight") {
+            this.fig8Time += 0.03;
+            let scl = 60;
+            let cx = WIDTH/2, cy = HEIGHT/2;
+            let t = this.fig8Time;
+            let den = 1 + sin(t)*sin(t);
+            let tx = cx + scl * cos(t) / den;
+            let ty = cy + scl * sin(t) * cos(t) / den;
+            this.velocity.x = (tx - this.x) * 0.15;
+            this.velocity.y = (ty - this.y) * 0.15;
+            this.acceleration = {x: this.velocity.x * 0.1, y: this.velocity.y * 0.1};
+        } else if (this.motionType === "stationary") {
+            this.velocity = {x: 0, y: 0};
+        }
+
+        let prevX = this.x, prevY = this.y;
+        this.x = mod(this.x + this.velocity.x, WIDTH);
+        this.y = mod(this.y + this.velocity.y, HEIGHT);
+        
+        let dx = this.x - prevX;
+        let dy = this.y - prevY;
+        if (abs(dx) > WIDTH/2) dx -= Math.sign(dx) * WIDTH;
+        if (abs(dy) > HEIGHT/2) dy -= Math.sign(dy) * HEIGHT;
+
+        // Update inner objects
+        let nonInertial = ["circular", "oscillating", "sinusoidal", "triangle", "figure_eight"];
+        if (!nonInertial.includes(this.motionType)) {
+            this.smallObjects.forEach(obj => {
+                obj.x = mod(obj.x + dx, WIDTH);
+                obj.y = mod(obj.y + dy, HEIGHT);
+            });
+        } else {
+            this.updateCollisions();
+            this.smallObjects.forEach(obj => {
+                obj.x = mod(obj.x + obj.vx, WIDTH);
+                obj.y = mod(obj.y + obj.vy, HEIGHT);
+                this.constrainToShip(obj);
+            });
+        }
+    }
+
+    draw(refX, refY, isZoomed) {
+        let relX = mod(this.x - refX + WIDTH/2, WIDTH) - WIDTH/2;
+        let relY = mod(this.y - refY + HEIGHT/2, HEIGHT) - HEIGHT/2;
+        
+        push();
+        if (isZoomed) {
+            translate(WIDTH/2, HEIGHT/2);
+            setGlow(this.color, 30);
+            stroke(this.color);
+            strokeWeight(3);
+            fill(red(this.color), green(this.color), blue(this.color), 50);
+            circle(0, 0, this.radius * 2 * ZOOM_FACTOR);
+            clearGlow();
+            
+            noStroke();
+            fill(palette.white);
+            this.smallObjects.forEach(obj => {
+                let ox = obj.x - this.x;
+                let oy = obj.y - this.y;
+                circle(ox * ZOOM_FACTOR, oy * ZOOM_FACTOR, obj.radius * 2 * ZOOM_FACTOR);
+            });
+        } else {
+            translate(WIDTH/2 + relX, HEIGHT/2 + relY);
+            
+            // Checkmark if solved
+            if (this.guessedMotion === this.motionType) {
+                setGlow(palette.green, 20);
+                stroke(palette.green);
+                strokeWeight(2);
+                noFill();
+                circle(0, 0, this.radius * 2.5);
+                clearGlow();
+            }
+
+            setGlow(this.color, 15);
+            fill(this.color);
+            noStroke();
+            circle(0, 0, this.radius * 2);
+            clearGlow();
+            
+            fill(palette.white);
+            this.smallObjects.forEach(obj => {
+                let ox = obj.x - this.x;
+                let oy = obj.y - this.y;
+                // Avoid wrapping issues for inner dots by drawing relative to parent
+                circle(ox, oy, obj.radius * 2);
+            });
+        }
+        pop();
+    }
+}
+
+function hypot(a, b) {
+    return Math.sqrt(a*a + b*b);
+}
+
+// --- UI Drawing ---
+function drawGameInfo() {
+    fill(palette.white);
+    noStroke();
+    textAlign(LEFT, TOP);
+    
+    textSize(28);
+    text("Reference Frame Mystery", 10, 10);
+    
+    textSize(16);
+    text("Goal: Identify each spaceship's motion type!", 10, 45);
+    text("Click colored buttons to switch reference frames", 10, 65);
+    text("Use trails (triangle) and zoom (magnifying glass) to analyze", 10, 85);
+    text("LEFT-CLICK on spaceships to guess their motion!", 10, 105);
+    
+    fill(palette.red);
+    text(`Guesses: ${guessesMade} / ${MAX_GUESSES}`, 10, 125);
+    
+    if (selectedSprite !== -1) {
+        fill(palette.yellow);
+        text(`Reference Frame: ${spaceships[selectedSprite].name}`, 10, 160);
+    } else {
+        fill(palette.white);
+        text(`Reference Frame: Absolute (Stars)`, 10, 160);
+    }
+}
+
+function drawConsole() {
+    let cb = buttons.console;
+    fill(palette.uiBg);
+    stroke(80);
+    strokeWeight(1);
+    rect(cb.x, cb.y, cb.w, cb.h, 10);
+
+    buttons.forEach(b => {
+        let active = false;
+        if (b.type === 'ship' && selectedSprite === b.id) active = true;
+        if (b.type === 'triangle' && trailMode) active = true;
+        if (b.type === 'zoom' && zoomMode) active = true;
+
+        push();
+        translate(b.x, b.y);
+        
+        if (active) setGlow(b.color, 15);
+        
+        if (b.type === 'ship') {
+            fill(active ? color(red(b.color), green(b.color), blue(b.color), 255) : color(red(b.color)*0.6, green(b.color)*0.6, blue(b.color)*0.6));
+            noStroke();
+            rect(0, 0, b.w, b.h, 5);
+            fill(palette.black);
+            textAlign(CENTER, CENTER);
+            textSize(14);
+            textStyle(BOLD);
+            text(b.label, b.w/2, b.h/2);
+        } else if (b.type === 'triangle') {
+            fill(active ? palette.red : color(100, 20, 20));
+            noStroke();
+            triangle(0, b.h, b.w, b.h, b.w/2, 0);
+        } else if (b.type === 'zoom') {
+            stroke(active ? palette.white : color(100));
+            strokeWeight(3);
+            noFill();
+            circle(b.w/3, b.h/3, b.w/2);
+            line(b.w/2, b.h/2, b.w*0.8, b.h*0.8);
+        }
+        
+        if (active) {
+            noFill();
+            stroke(palette.white);
+            strokeWeight(2);
+            if (b.type === 'triangle') triangle(-4, b.h+4, b.w+4, b.h+4, b.w/2, -4);
+            else if (b.type === 'ship') rect(-3, -3, b.w+6, b.h+6, 8);
+            else rect(-3, -3, b.w+6, b.h+6, 8);
+        }
+        clearGlow();
+        pop();
+    });
+}
+
+function drawMotionMenu() {
+    let types = [
+        ["Stationary", "stationary"], ["Uniform Linear", "uniform_lr"],
+        ["Uniform Vertical", "uniform_bt"], ["Uniform Diagonal", "uniform_diagonal"],
+        ["Circular Motion", "circular"], ["Sinusoidal Accel", "sinusoidal"],
+        ["Triangle Path", "triangle"], ["Figure-8 Path", "figure_eight"]
+    ];
+    
+    let w = 400, h = 380;
+    let x = (WIDTH - w)/2, y = (HEIGHT - h)/2;
+    
+    fill(30, 30, 35, 240);
+    stroke(palette.white);
+    strokeWeight(2);
+    rect(x, y, w, h, 10);
+    
+    fill(palette.white);
+    noStroke();
+    textAlign(CENTER, CENTER);
+    textSize(24);
+    text(`What motion does ${spaceships[selectedSpriteForGuess].name} have?`, WIDTH/2, y + 30);
+    
+    motionMenuButtons = [];
+    let bw = 300, bh = 32;
+    let startY = y + 70;
+    
+    types.forEach((t, i) => {
+        let bx = (WIDTH - bw)/2;
+        let by = startY + i * 36;
+        motionMenuButtons.push({x: bx, y: by, w: bw, h: bh, label: t[0], val: t[1]});
+        
+        let hover = mouseX > bx && mouseX < bx+bw && mouseY > by && mouseY < by+bh;
+        fill(hover ? 100 : 60);
+        stroke(200);
+        strokeWeight(1);
+        rect(bx, by, bw, bh, 5);
+        
+        fill(palette.white);
+        noStroke();
+        textSize(16);
+        text(t[0], WIDTH/2, by + bh/2);
+    });
+}
+
+function drawPasscodeScreen() {
+    fill(0, 0, 0, 200);
+    rect(0, 0, WIDTH, HEIGHT);
+    
+    textAlign(CENTER, CENTER);
+    textSize(40);
+    fill(palette.yellow);
+    text("Enter Passcode:", WIDTH/2, HEIGHT/2 - 40);
+    
+    fill(palette.white);
+    textSize(30);
+    text(passcodeSoFar + "_", WIDTH/2, HEIGHT/2 + 20);
+}
+
+function drawAnswers(refX, refY) {
+    textAlign(CENTER, CENTER);
+    textSize(18);
+    textStyle(BOLD);
+    
+    spaceships.forEach(s => {
+        let relX = mod(s.x - refX + WIDTH/2, WIDTH) - WIDTH/2;
+        let relY = mod(s.y - refY + HEIGHT/2, HEIGHT) - HEIGHT/2;
+        let drawX = WIDTH/2 + relX;
+        let drawY = HEIGHT/2 + relY + s.radius + 15;
+        
+        setGlow(palette.black, 4);
+        fill(palette.yellow);
+        text(s.motionType.replace("_", " ").toUpperCase(), drawX, drawY);
+        clearGlow();
+    });
+    textStyle(NORMAL);
+}
+
+function drawGameOver() {
+    fill(0, 0, 0, 200);
+    rect(0, 0, WIDTH, HEIGHT);
+    
+    textAlign(CENTER, CENTER);
+    textSize(50);
+    textStyle(BOLD);
+    
+    if (gameSolved) {
+        fill(palette.green);
+        setGlow(palette.green, 20);
+        text("MYSTERY SOLVED!", WIDTH/2, HEIGHT/2);
+    } else {
+        fill(palette.red);
+        setGlow(palette.red, 20);
+        text("GAME OVER", WIDTH/2, HEIGHT/2);
+    }
+    clearGlow();
+    textStyle(NORMAL);
+}
+
+// --- Interactions ---
+function mousePressed() {
+    if (gameSolved || guessesMade >= MAX_GUESSES || inputtingPasscode) return;
+
+    // Handle Motion Menu Clicks
+    if (selectedSpriteForGuess !== -1) {
+        for (let b of motionMenuButtons) {
+            if (mouseX > b.x && mouseX < b.x + b.w && mouseY > b.y && mouseY < b.y + b.h) {
+                spaceships[selectedSpriteForGuess].guessedMotion = b.val;
+                selectedSpriteForGuess = -1;
+                guessesMade++;
+                
+                // Check win condition
+                let allCorrect = true;
+                spaceships.forEach(s => { if (s.guessedMotion !== s.motionType) allCorrect = false; });
+                if (allCorrect) gameSolved = true;
+                return;
+            }
+        }
+        // Click outside closes menu
+        selectedSpriteForGuess = -1;
+        return;
+    }
+
+    // Handle Console Buttons
+    for (let b of buttons) {
+        if (mouseX > b.x && mouseX < b.x + b.w && mouseY > b.y && mouseY < b.y + b.h) {
+            if (b.type === 'ship') {
+                selectedSprite = b.id;
+                zoomMode = false;
+            } else if (b.type === 'triangle') {
+                trailMode = !trailMode;
+            } else if (b.type === 'zoom') {
+                if (selectedSprite !== -1) zoomMode = !zoomMode;
+            }
+            return;
+        }
+    }
+
+    // Handle Clicking on a Spaceship
+    if (!zoomMode) {
+        let refX = selectedSprite !== -1 ? spaceships[selectedSprite].x : 0;
+        let refY = selectedSprite !== -1 ? spaceships[selectedSprite].y : 0;
+        
+        for (let i = 0; i < spaceships.length; i++) {
+            let s = spaceships[i];
+            let relX = mod(s.x - refX + WIDTH/2, WIDTH) - WIDTH/2;
+            let relY = mod(s.y - refY + HEIGHT/2, HEIGHT) - HEIGHT/2;
+            let drawX = WIDTH/2 + relX;
+            let drawY = HEIGHT/2 + relY;
+            
+            if (hypot(mouseX - drawX, mouseY - drawY) <= s.radius) {
+                selectedSpriteForGuess = i;
+                return;
+            }
+        }
+    }
+}
+
+function keyPressed() {
+    if (inputtingPasscode) {
+        if (key >= '0' && key <= '9') {
+            passcodeSoFar += key;
+            if (passcodeSoFar === REVEAL_PASSCODE) {
+                revealAnswers = true;
+                inputtingPasscode = false;
+            } else if (!REVEAL_PASSCODE.startsWith(passcodeSoFar)) {
+                passcodeSoFar = "";
+                inputtingPasscode = false;
+            }
+        } else if (keyCode === ESCAPE) {
+            passcodeSoFar = "";
+            inputtingPasscode = false;
+        }
+    } else {
+        if (keyCode === ESCAPE) {
+            if (zoomMode) zoomMode = false;
+            else if (selectedSpriteForGuess !== -1) selectedSpriteForGuess = -1;
+        } else if (key === 'a' || key === 'A') {
+            inputtingPasscode = true;
+            passcodeSoFar = "";
+        }
+    }
+}
+</script>
+</body>
+</html>

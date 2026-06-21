@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Maxwell's Fourth Equation: Ampere's Law Visualization</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #030305;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+            color: white;
+        }
+        canvas {
+            box-shadow: 0 0 50px rgba(0, 0, 0, 1);
+            border-radius: 8px;
+        }
+    </style>
+</head>
+<body>
+<script>
+// --- Constants & Globals ---
+const WIDTH = 900;
+const HEIGHT = 700;
+
+// Physics & Wire Parameters
+const WIRE_Y = HEIGHT / 2;
+const WIRE_LENGTH = 700;
+const WIRE_START_X = (WIDTH - WIRE_LENGTH) / 2;
+const WIRE_END_X = WIRE_START_X + WIRE_LENGTH;
+const PARTICLE_RADIUS = 8;
+
+const MIN_PARTICLES = 1;
+const MAX_PARTICLES = 20;
+const MIN_SPEED = -10;
+const MAX_SPEED = 10;
+const ACCELERATION = 0.5;
+
+let numParticles = 5;
+let targetSpeed = 3;
+let currentSpeed = 3;
+let particles = [];
+
+let palette;
+
+function setup() {
+    createCanvas(WIDTH, HEIGHT);
+    
+    palette = {
+        bg: color(8, 10, 15),
+        wire: color(80, 90, 100),
+        wireGlow: color(255, 255, 255, 50),
+        posCharge: color(255, 50, 80),   // Neon Red (Moving Right)
+        negCharge: color(50, 150, 255),  // Neon Blue (Moving Left)
+        neutral: color(150, 150, 150),   // Gray (Stopped)
+        bField: color(0, 200, 255, 150), // Cyan magnetic field
+        uiBg: color(15, 20, 25, 220),
+        white: color(255)
+    };
+
+    initParticles();
+}
+
+function initParticles() {
+    particles = [];
+    let spacing = numParticles > 0 ? WIRE_LENGTH / numParticles : 0;
+    for (let i = 0; i < numParticles; i++) {
+        let x = WIRE_START_X + i * spacing;
+        particles.push(new Particle(x, currentSpeed));
+    }
+}
+
+// --- Native Glow Helper ---
+function setGlow(clr, blurSize) {
+    drawingContext.shadowBlur = blurSize;
+    drawingContext.shadowColor = clr.toString();
+}
+
+function clearGlow() {
+    drawingContext.shadowBlur = 0;
+}
+
+// --- Particle Class ---
+class Particle {
+    constructor(x, speed) {
+        this.x = x;
+        this.speed = speed;
+        this.color = palette.neutral;
+    }
+
+    update(globalSpeed) {
+        // Smoothly adjust speed to match global target
+        if (this.speed < globalSpeed) {
+            this.speed = min(this.speed + ACCELERATION, globalSpeed);
+        } else if (this.speed > globalSpeed) {
+            this.speed = max(this.speed - ACCELERATION, globalSpeed);
+        }
+
+        // Color depends on direction
+        if (this.speed > 0) this.color = palette.posCharge;
+        else if (this.speed < 0) this.color = palette.negCharge;
+        else this.color = palette.neutral;
+
+        // Move
+        this.x += this.speed;
+
+        // Wrap around wire bounds
+        if (this.speed > 0 && this.x > WIRE_END_X) {
+            this.x = WIRE_START_X;
+        } else if (this.speed < 0 && this.x < WIRE_START_X) {
+            this.x = WIRE_END_X;
+        }
+    }
+
+    drawField() {
+        if (abs(this.speed) < 0.1) return;
+
+        // Scale field based on speed
+        let fieldStrength = map(abs(this.speed), 0, MAX_SPEED, 0, 1);
+        let direction = Math.sign(this.speed); // 1 = Right, -1 = Left
+        
+        push();
+        translate(this.x, WIRE_Y);
+
+        // Draw multiple concentric 3D rings
+        for (let i = 1; i <= 4; i++) {
+            let ovalW = fieldStrength * 30 * i;
+            let ovalH = fieldStrength * 70 * i;
+            let alpha = 100 - i * 20;
+
+            if (alpha <= 0) continue;
+
+            // Back half of the magnetic loop (drawn faintly)
+            noFill();
+            stroke(0, 200, 255, alpha * 0.3);
+            strokeWeight(2);
+            arc(0, 0, ovalW, ovalH, PI / 2, 3 * PI / 2);
+
+            // Front half of the magnetic loop (drawn brightly)
+            stroke(0, 200, 255, alpha);
+            setGlow(palette.bField, 10);
+            arc(0, 0, ovalW, ovalH, 3 * PI / 2, PI / 2);
+            clearGlow();
+
+            // Draw directional arrows moving along the front loop
+            // Right Hand Rule: Current Right -> Front field goes DOWN. Current Left -> Front field goes UP.
+            let flowSpeed = frameCount * 0.05 * direction; 
+            let theta = (flowSpeed + (i * PI / 2)) % PI; // Keep angle on the front half (-PI/2 to PI/2)
+            
+            // Adjust theta to sweep the front face
+            let mappedTheta = map(theta, 0, PI, -PI/2, PI/2);
+            
+            let arrowX = (ovalW / 2) * cos(mappedTheta);
+            let arrowY = (ovalH / 2) * sin(mappedTheta);
+
+            // Calculate tangent for arrowhead
+            let tanX = -(ovalW / 2) * sin(mappedTheta);
+            let tanY = (ovalH / 2) * cos(mappedTheta);
+            let a = atan2(tanY, tanX);
+            
+            // If moving left (direction = -1), flip the arrow
+            if (direction < 0) a += PI;
+
+            push();
+            translate(arrowX, arrowY);
+            rotate(a);
+            fill(255, 255, 255, alpha + 50);
+            noStroke();
+            triangle(4, 0, -4, 3, -4, -3); // Tiny chevron
+            pop();
+        }
+        pop();
+    }
+
+    drawParticle() {
+        setGlow(this.color, 15);
+        fill(this.color);
+        noStroke();
+        circle(this.x, WIRE_Y, PARTICLE_RADIUS * 2);
+        clearGlow();
+        
+        // Add a bright core
+        fill(255, 255, 255, 200);
+        circle(this.x, WIRE_Y, PARTICLE_RADIUS);
+    }
+}
+
+// --- Main Draw Loop ---
+function draw() {
+    background(palette.bg);
+
+    // 1. Smoothly adjust global speed to target
+    if (currentSpeed < targetSpeed) {
+        currentSpeed = min(currentSpeed + ACCELERATION, targetSpeed);
+    } else if (currentSpeed > targetSpeed) {
+        currentSpeed = max(currentSpeed - ACCELERATION, targetSpeed);
+    }
+
+    // 2. Draw Wire (Background)
+    setGlow(palette.wireGlow, 20);
+    stroke(palette.wire);
+    strokeWeight(6);
+    line(WIRE_START_X, WIRE_Y, WIRE_END_X, WIRE_Y);
+    stroke(150);
+    strokeWeight(2);
+    line(WIRE_START_X, WIRE_Y, WIRE_END_X, WIRE_Y); // Core reflection
+    clearGlow();
+
+    // 3. Update & Draw Fields (Behind particles)
+    for (let p of particles) {
+        p.update(currentSpeed);
+        p.drawField();
+    }
+
+    // 4. Draw Particles (Front)
+    for (let p of particles) {
+        p.drawParticle();
+    }
+
+    // 5. UI Rendering
+    drawUI();
+}
+
+function drawUI() {
+    // HUD Box
+    fill(palette.uiBg);
+    stroke(50, 60, 70);
+    strokeWeight(1);
+    rectMode(CORNER);
+    rect(20, 20, 380, 140, 8);
+
+    fill(palette.white);
+    noStroke();
+    textAlign(LEFT, TOP);
+    textSize(18);
+    textStyle(BOLD);
+    text("MAXWELL'S FOURTH EQUATION", 35, 35);
+    
+    textSize(13);
+    textStyle(NORMAL);
+    fill(180, 200, 220);
+    text("Current moving through a wire creates a magnetic field.", 35, 60);
+    
+    let dirText = currentSpeed > 0 ? "Right (Red)" : currentSpeed < 0 ? "Left (Blue)" : "Zero";
+    let speedDisp = abs(currentSpeed) > 0.1 ? abs(currentSpeed).toFixed(1) : "0.0";
+    
+    fill(currentSpeed > 0 ? palette.posCharge : currentSpeed < 0 ? palette.negCharge : palette.neutral);
+    text(`Current (Velocity): ${speedDisp} | Direction: ${dirText}`, 35, 85);
+    
+    fill(palette.white);
+    text(`Charge Carriers: ${numParticles}`, 35, 105);
+    text("Right-Hand Rule: Thumb follows current, fingers curl as B-field.", 35, 125);
+
+    // Controls Box (Bottom)
+    fill(palette.uiBg);
+    stroke(50, 60, 70);
+    rect(WIDTH / 2 - 250, HEIGHT - 70, 500, 50, 8);
+    
+    fill(palette.white);
+    textAlign(CENTER, CENTER);
+    text("[←] [→] Adjust Velocity   |   [↑] [↓] Adjust Charges   |   [SPACE] Stop", WIDTH / 2, HEIGHT - 45);
+}
+
+// --- Inputs ---
+function keyPressed() {
+    if (keyCode === UP_ARROW) {
+        if (numParticles < MAX_PARTICLES) {
+            numParticles++;
+            initParticles();
+        }
+        return false; // Prevent page scroll
+    } 
+    else if (keyCode === DOWN_ARROW) {
+        if (numParticles > MIN_PARTICLES) {
+            numParticles--;
+            initParticles();
+        }
+        return false; // Prevent page scroll
+    }
+    else if (keyCode === RIGHT_ARROW) {
+        if (targetSpeed < MAX_SPEED) targetSpeed++;
+    }
+    else if (keyCode === LEFT_ARROW) {
+        if (targetSpeed > MIN_SPEED) targetSpeed--;
+    }
+    else if (key === ' ') {
+        targetSpeed = 0;
+        return false; // Prevent page scroll
+    }
+}
+</script>
+</body>
+</html>

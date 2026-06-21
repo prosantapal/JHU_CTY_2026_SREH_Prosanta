@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Maxwell's Third Equation - Induction in a Wire Loop</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #030305;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+            color: white;
+        }
+        canvas {
+            box-shadow: 0 0 50px rgba(0, 0, 0, 1);
+            border-radius: 8px;
+        }
+    </style>
+</head>
+<body>
+<script>
+// --- Constants & Globals ---
+const WIDTH = 800;
+const HEIGHT = 600;
+
+// Parallelogram parameters
+const PARA_WIDTH = 120;
+const PARA_HEIGHT = 280;
+const PARA_SKEW = 140; // How much the parallelogram is skewed horizontally
+
+// Movement parameters
+let x_offset = 0;
+let para_move_speed = 0;
+const MAX_MOVE_SPEED = 6;
+const ACCEL = 0.15;
+const DECEL = 0.25;
+let current_direction = 1; // 1 for right, -1 for left
+
+// Fan lines (Magnetic Field) parameters
+const NUM_FAN_LINES = 24;
+const MAX_FAN_ANGLE = 60; // degrees
+
+// Ball (Charges) parameters
+const NUM_BALLS = 14;
+const BALL_RADIUS = 8;
+let ball_speed = 0;
+let balls = [];
+let total_perimeter = 0;
+
+let palette;
+
+function setup() {
+    createCanvas(WIDTH, HEIGHT);
+    
+    palette = {
+        bg: color(8, 10, 15),
+        bField: color(255, 60, 100, 80),  // Glowing Red/Pink for magnetic field lines
+        wireBase: color(40, 50, 60),
+        wireGlow: color(0, 255, 200),     // Neon Cyan
+        charge: color(255, 220, 50),      // Bright Yellow
+        white: color(255),
+        uiBg: color(15, 20, 25, 220)
+    };
+
+    let verts = calculateVertices(0);
+    total_perimeter = calculatePerimeter(verts);
+    initializeBalls();
+}
+
+// --- Native Glow Helper ---
+function setGlow(clr, blurSize) {
+    drawingContext.shadowBlur = blurSize;
+    drawingContext.shadowColor = clr.toString();
+}
+
+function clearGlow() {
+    drawingContext.shadowBlur = 0;
+}
+
+// --- Math & Geometry Functions ---
+function mod(n, m) {
+    return ((n % m) + m) % m;
+}
+
+function calculateVertices(offset) {
+    let cx = WIDTH / 2 + offset;
+    let cy = HEIGHT / 2;
+    let pw = PARA_WIDTH / 2;
+    let ph = PARA_HEIGHT / 2;
+    let sk = PARA_SKEW / 2;
+
+    return [
+        {x: cx - pw - sk, y: cy - ph},
+        {x: cx + pw - sk, y: cy - ph},
+        {x: cx + pw + sk, y: cy + ph},
+        {x: cx - pw + sk, y: cy + ph}
+    ];
+}
+
+function calculatePerimeter(verts) {
+    let p = 0;
+    for (let i = 0; i < 4; i++) {
+        let v1 = verts[i];
+        let v2 = verts[(i + 1) % 4];
+        p += dist(v1.x, v1.y, v2.x, v2.y);
+    }
+    return p;
+}
+
+function getPointOnPerimeter(pos, verts) {
+    pos = mod(pos, total_perimeter);
+    
+    let l1 = dist(verts[0].x, verts[0].y, verts[1].x, verts[1].y);
+    let l2 = dist(verts[1].x, verts[1].y, verts[2].x, verts[2].y);
+    let l3 = dist(verts[2].x, verts[2].y, verts[3].x, verts[3].y);
+    let l4 = dist(verts[3].x, verts[3].y, verts[0].x, verts[0].y);
+
+    if (pos < l1) {
+        let t = pos / l1;
+        return { x: lerp(verts[0].x, verts[1].x, t), y: lerp(verts[0].y, verts[1].y, t) };
+    } else if (pos < l1 + l2) {
+        pos -= l1;
+        let t = pos / l2;
+        return { x: lerp(verts[1].x, verts[2].x, t), y: lerp(verts[1].y, verts[2].y, t) };
+    } else if (pos < l1 + l2 + l3) {
+        pos -= (l1 + l2);
+        let t = pos / l3;
+        return { x: lerp(verts[2].x, verts[3].x, t), y: lerp(verts[2].y, verts[3].y, t) };
+    } else {
+        pos -= (l1 + l2 + l3);
+        let t = pos / l4;
+        return { x: lerp(verts[3].x, verts[0].x, t), y: lerp(verts[3].y, verts[0].y, t) };
+    }
+}
+
+function initializeBalls() {
+    balls = [];
+    let spacing = total_perimeter / NUM_BALLS;
+    for (let i = 0; i < NUM_BALLS; i++) {
+        balls.push(i * spacing);
+    }
+}
+
+// --- Main Draw Loop ---
+function draw() {
+    background(palette.bg);
+
+    handleInputAndPhysics();
+
+    let verts = calculateVertices(x_offset);
+
+    drawFanLines();
+    drawWireLoop(verts);
+    drawBalls(verts);
+    drawUI();
+}
+
+function handleInputAndPhysics() {
+    // Decelerate if no keys are pressed
+    if (!keyIsDown(LEFT_ARROW) && !keyIsDown(RIGHT_ARROW)) {
+        if (abs(para_move_speed) > 0.1) {
+            para_move_speed -= DECEL * Math.sign(para_move_speed);
+        } else {
+            para_move_speed = 0;
+            ball_speed = 0;
+        }
+    } else {
+        // Accelerate based on key press
+        if (keyIsDown(LEFT_ARROW)) {
+            para_move_speed -= ACCEL;
+            current_direction = -1; // Current flows opposite to motion
+        }
+        if (keyIsDown(RIGHT_ARROW)) {
+            para_move_speed += ACCEL;
+            current_direction = 1;  // Current flows with motion
+        }
+        
+        para_move_speed = constrain(para_move_speed, -MAX_MOVE_SPEED, MAX_MOVE_SPEED);
+        ball_speed = abs(para_move_speed) * current_direction;
+    }
+
+    x_offset += para_move_speed;
+
+    // Clamp within screen
+    if (x_offset < -WIDTH/2 + PARA_WIDTH) {
+        x_offset = -WIDTH/2 + PARA_WIDTH;
+        para_move_speed = 0;
+    } else if (x_offset > WIDTH/2 - PARA_WIDTH) {
+        x_offset = WIDTH/2 - PARA_WIDTH;
+        para_move_speed = 0;
+    }
+}
+
+function drawFanLines() {
+    // Represents a diverging magnetic field source on the left
+    setGlow(palette.bField, 15);
+    stroke(palette.bField);
+    strokeWeight(2);
+    
+    for (let i = 0; i < NUM_FAN_LINES; i++) {
+        let angle = -MAX_FAN_ANGLE + (i * (2 * MAX_FAN_ANGLE) / (NUM_FAN_LINES - 1));
+        let rad = radians(angle);
+        
+        let startX = -50;
+        let startY = HEIGHT / 2;
+        let endX = WIDTH + 50;
+        let endY = startY + tan(rad) * (WIDTH + 100);
+        
+        line(startX, startY, endX, endY);
+    }
+    clearGlow();
+    
+    // Draw the source "Pole" on the far left edge
+    fill(255, 50, 50, 200);
+    noStroke();
+    rect(0, HEIGHT/2 - 150, 15, 300, 0, 8, 8, 0);
+}
+
+function drawWireLoop(verts) {
+    // Glow effect
+    setGlow(palette.wireGlow, 20);
+    noFill();
+    stroke(palette.wireGlow);
+    strokeWeight(4);
+    
+    beginShape();
+    verts.forEach(v => vertex(v.x, v.y));
+    endShape(CLOSE);
+    clearGlow();
+
+    // Inner wire core
+    stroke(255, 255, 255, 200);
+    strokeWeight(1);
+    beginShape();
+    verts.forEach(v => vertex(v.x, v.y));
+    endShape(CLOSE);
+}
+
+function drawBalls(verts) {
+    for (let i = 0; i < balls.length; i++) {
+        // Update position
+        balls[i] = mod(balls[i] + ball_speed, total_perimeter);
+        let pos = getPointOnPerimeter(balls[i], verts);
+
+        // Draw Ball (Charge)
+        setGlow(palette.charge, 15);
+        fill(palette.charge);
+        noStroke();
+        circle(pos.x, pos.y, BALL_RADIUS * 2);
+        clearGlow();
+
+        // Draw Direction Indicator (Chevron)
+        if (abs(ball_speed) > 0.1) {
+            let direction = Math.sign(ball_speed);
+            let epsilon = 1; 
+            let next_pos = getPointOnPerimeter(balls[i] + epsilon * direction, verts);
+            
+            let dx = next_pos.x - pos.x;
+            let dy = next_pos.y - pos.y;
+            let len = dist(0, 0, dx, dy);
+            
+            if (len > 0) {
+                dx /= len;
+                dy /= len;
+                
+                let tip = { x: pos.x + dx * BALL_RADIUS * 1.5, y: pos.y + dy * BALL_RADIUS * 1.5 };
+                let base1 = { x: pos.x + dy * BALL_RADIUS * 0.7 - dx * BALL_RADIUS * 0.7, 
+                              y: pos.y - dx * BALL_RADIUS * 0.7 - dy * BALL_RADIUS * 0.7 };
+                let base2 = { x: pos.x - dy * BALL_RADIUS * 0.7 - dx * BALL_RADIUS * 0.7, 
+                              y: pos.y + dx * BALL_RADIUS * 0.7 - dy * BALL_RADIUS * 0.7 };
+                
+                fill(10);
+                noStroke();
+                triangle(tip.x, tip.y, base1.x, base1.y, base2.x, base2.y);
+            }
+        }
+    }
+}
+
+function drawUI() {
+    // HUD Box
+    fill(palette.uiBg);
+    stroke(80);
+    strokeWeight(1);
+    rectMode(CORNER);
+    rect(20, 20, 270, 110, 10);
+
+    fill(palette.white);
+    noStroke();
+    textAlign(LEFT, TOP);
+    textSize(18);
+    textStyle(BOLD);
+    text("MAXWELL'S THIRD Equation", 35, 35);
+    
+    textSize(13);
+    textStyle(NORMAL);
+    fill(180, 200, 220);
+    text("Faraday's Law of Induction", 35, 60);
+    text("[ ← ] / [ → ] Move Wire Loop", 35, 80);
+    
+    // Dynamic readout
+    let currentText = "INDUCED CURRENT: ";
+    if (abs(ball_speed) < 0.1) {
+        fill(100, 120, 150);
+        currentText += "0.0 A";
+    } else {
+        fill(palette.charge);
+        let dirStr = ball_speed > 0 ? "Clockwise" : "Counter-Clockwise";
+        currentText += `${abs(ball_speed).toFixed(1)} A (${dirStr})`;
+    }
+    text(currentText, 35, 100);
+}
+</script>
+</body>
+</html>

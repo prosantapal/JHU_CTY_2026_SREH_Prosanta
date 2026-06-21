@@ -1,0 +1,628 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Galilean Physics & Newton's Laws</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #030305;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+            color: white;
+        }
+        canvas {
+            box-shadow: 0 0 50px rgba(0, 0, 0, 1);
+            border-radius: 8px;
+        }
+    </style>
+</head>
+<body>
+<script>
+// --- Constants & Globals ---
+const WIDTH = 800;
+const HEIGHT = 600;
+
+// Player Ship Physics Constants
+const PLAYER_THRUST = 0.05;
+const PLAYER_ROTATION_SPEED = 2;
+const MAX_VELOCITY = 30;
+const MAX_ROTATION = 0.01;
+
+let palette;
+let THRUSTER_COLORS;
+
+// Game Objects
+let stars = [];
+let objects = [];
+let markers = [];
+let playerShip;
+
+// App State
+let selectedRef = -1; // -1 means absolute/stars
+let freezeStars = false;
+let showTrails = false;
+let showVectors = false;
+let showForces = false;
+let showThrusters = false;
+
+// UI
+let buttons = [];
+
+// Math Helper
+function mod(n, m) {
+    return ((n % m) + m) % m;
+}
+
+// --- Setup ---
+function setup() {
+    createCanvas(WIDTH, HEIGHT);
+    
+    palette = {
+        bg: color(0, 0, 0),
+        white: color(255),
+        green: color(0, 255, 0),
+        blue: color(0, 0, 255),
+        yellow: color(255, 255, 0),
+        cyan: color(0, 255, 255),
+        red: color(255, 0, 0),
+        purple: color(200, 100, 200),
+        pink: color(255, 100, 180),
+        gray: color(50, 50, 50),
+        force: color(255, 100, 100),
+        orange: color(255, 150, 0)
+    };
+
+    THRUSTER_COLORS = [
+        color(255, 200, 100),
+        color(255, 150, 50),
+        color(255, 100, 0)
+    ];
+
+    // Initialize Stars
+    for (let i = 0; i < 20; i++) {
+        stars.push(new Star(random(WIDTH), random(HEIGHT)));
+    }
+
+    // Initialize Automated Objects
+    objects.push(new PhysicsObject(100, HEIGHT/2 + 100, "uniform_lr", palette.green, 0));
+    objects.push(new PhysicsObject(WIDTH/2 + 150, HEIGHT - 100, "uniform_bt", palette.blue, 1));
+    objects.push(new PhysicsObject(WIDTH/2, HEIGHT/2, "circular", palette.yellow, 2));
+    objects.push(new PhysicsObject(0, HEIGHT/2, "harmonic_lr", palette.cyan, 3));
+
+    // Initialize Player Ship
+    playerShip = new PlayerShip(WIDTH/2, HEIGHT/3);
+
+    // Initialize Fixed Markers (Invisible centers of gravity)
+    markers.push(new FixedMarker(WIDTH/2 - 100, HEIGHT/2, palette.red, 10));
+    markers.push(new FixedMarker(WIDTH/4 + 400, HEIGHT/2, palette.blue, 10));
+
+    setupUI();
+    background(palette.bg);
+}
+
+function setupUI() {
+    let bw = 50, bh = 40, spc = 10, pad = 20;
+    let totalW = bw * 8 + spc * 6 + 40;
+    let cx = (WIDTH - totalW) / 2;
+    let cy = HEIGHT - bh - pad - 20;
+
+    buttons.console = {x: cx, y: cy, w: totalW, h: bh + pad};
+
+    let startX = cx + 20;
+    let centerY = cy + 20;
+
+    // Ship/Ref Buttons
+    buttons.push({ id: 0, x: startX, y: centerY, w: bw, h: bh, c: palette.green, type: 'ref', label: "" });
+    buttons.push({ id: 1, x: startX + (bw+spc), y: centerY, w: bw, h: bh, c: palette.blue, type: 'ref', label: "" });
+    buttons.push({ id: 2, x: startX + 2*(bw+spc), y: centerY, w: bw, h: bh, c: palette.yellow, type: 'ref', label: "" });
+    buttons.push({ id: 3, x: startX + 3*(bw+spc), y: centerY, w: bw, h: bh, c: palette.cyan, type: 'ref', label: "" });
+    
+    // Absolute Frame
+    buttons.push({ id: -1, x: startX + 4*(bw+spc), y: centerY, w: bw, h: bh, c: palette.white, type: 'ref', label: "" });
+
+    // Toggles
+    buttons.push({ id: 'trail', x: startX + 5*(bw+spc), y: centerY, w: 40, h: bh, c: palette.red, type: 'triangle', label: "" });
+    buttons.push({ id: 'force', x: startX + 5*(bw+spc) + 40 + spc, y: centerY, w: bw, h: bh, c: palette.purple, type: 'toggle', label: "Forces" });
+    buttons.push({ id: 'thrust', x: startX + 6*(bw+spc) + 40 + spc, y: centerY, w: bw, h: bh, c: palette.orange, type: 'toggle', label: "Thruster" });
+}
+
+// --- Main Draw Loop ---
+function draw() {
+    // 1. Trails / Background
+    if (!showTrails) {
+        background(palette.bg);
+    } else {
+        noStroke();
+        fill(0, 0, 0, 10); 
+        rect(0, 0, WIDTH, HEIGHT);
+    }
+
+    // Input Handling for Player
+    playerShip.forwardThrust = keyIsDown(UP_ARROW);
+    playerShip.backThrust = keyIsDown(DOWN_ARROW);
+    playerShip.leftThrust = keyIsDown(LEFT_ARROW);
+    playerShip.rightThrust = keyIsDown(RIGHT_ARROW);
+
+    // 2. Physics Update
+    let refVx = 0, refVy = 0;
+    if (selectedRef !== -1) {
+        refVx = objects[selectedRef].vx;
+        refVy = objects[selectedRef].vy;
+    }
+
+    // Update Stars
+    if (!freezeStars) {
+        stars.forEach(s => s.update(refVx, refVy));
+    }
+    
+    // Update Markers
+    markers.forEach(m => m.update(refVx, refVy));
+
+    // Update Automated Objects
+    objects.forEach(obj => {
+        obj.updateVelocity();
+        obj.updatePosition(refVx, refVy, selectedRef);
+    });
+
+    // Update Player Ship
+    playerShip.update(refVx, refVy);
+
+    // 3. Drawing
+    // Draw Stars
+    stars.forEach(s => s.draw());
+
+    // Draw Fixed Markers
+    markers.forEach(m => m.draw());
+
+    // Draw Objects
+    objects.forEach(obj => {
+        obj.draw(showVectors);
+        if (showForces && (obj.color === palette.yellow || obj.color === palette.cyan)) {
+            obj.drawForceVectors(markers);
+        }
+    });
+
+    // Draw Player Ship
+    playerShip.draw(showVectors);
+    if (showForces) playerShip.drawForceVectors();
+
+    // 4. UI Rendering
+    drawConsole();
+    drawTextInfo();
+}
+
+// --- Physics Classes ---
+class ThrusterParticle {
+    constructor(x, y, angle) {
+        this.x = x;
+        this.y = y;
+        this.angle = angle;
+        this.speed = random(1, 5);
+        this.maxLifetime = floor(random(10, 30));
+        this.lifetime = this.maxLifetime;
+        this.size = floor(random(2, 5));
+        this.color = random(THRUSTER_COLORS);
+    }
+
+    update() {
+        this.x += cos(this.angle) * this.speed;
+        this.y += sin(this.angle) * this.speed;
+        this.lifetime--;
+        return this.lifetime <= 0;
+    }
+
+    draw() {
+        let alpha = map(this.lifetime, 0, this.maxLifetime, 0, 255);
+        noStroke();
+        fill(red(this.color), green(this.color), blue(this.color), alpha);
+        circle(this.x, this.y, this.size * 2);
+    }
+}
+
+class FixedMarker {
+    constructor(x, y, col, size) {
+        this.x = x; this.y = y;
+        this.color = col;
+        this.size = size;
+    }
+
+    update(refVx, refVy) {
+        this.x = mod(this.x - refVx, WIDTH);
+        this.y = mod(this.y - refVy, HEIGHT);
+    }
+
+    draw() {
+        let hs = this.size / 2;
+        stroke(this.color);
+        strokeWeight(3);
+        line(this.x - hs, this.y - hs, this.x + hs, this.y + hs);
+        line(this.x - hs, this.y + hs, this.x + hs, this.y - hs);
+    }
+}
+
+class Star {
+    constructor(x, y) {
+        this.x = x; this.y = y;
+        this.radius = random(2, 5);
+        this.vx = 0; this.vy = 0;
+    }
+
+    update(refVx, refVy) {
+        this.x = mod(this.x + (this.vx - refVx), WIDTH);
+        this.y = mod(this.y + (this.vy - refVy), HEIGHT);
+    }
+
+    draw() {
+        noStroke();
+        fill(palette.white);
+        circle(this.x, this.y, this.radius * 2);
+    }
+}
+
+class PlayerShip {
+    constructor(x, y) {
+        this.x = x; this.y = y;
+        this.angle = 0;
+        this.vx = 0; this.vy = 0;
+        this.rotSpeed = 0;
+        this.radius = 20;
+        this.color = palette.pink;
+        this.particles = [];
+        this.thrusterActive = false;
+        
+        this.forwardThrust = false;
+        this.backThrust = false;
+        this.leftThrust = false;
+        this.rightThrust = false;
+    }
+
+    update(refVx, refVy) {
+        // Thrust Physics
+        if (this.forwardThrust) {
+            this.vx += cos(this.angle) * PLAYER_THRUST;
+            this.vy += sin(this.angle) * PLAYER_THRUST;
+            this._addParticles(this.angle + PI);
+        }
+        if (this.backThrust) {
+            this.vx -= cos(this.angle) * PLAYER_THRUST * 0.5;
+            this.vy -= sin(this.angle) * PLAYER_THRUST * 0.5;
+            this._addParticles(this.angle);
+        }
+
+        // Rotational Physics (with counter-thrust)
+        if (this.leftThrust) {
+            if (this.rotSpeed > 0) this.rotSpeed -= PLAYER_ROTATION_SPEED * 0.001;
+            else this.rotSpeed -= PLAYER_ROTATION_SPEED * 0.008;
+            this._addParticles(this.angle + HALF_PI);
+        }
+        if (this.rightThrust) {
+            if (this.rotSpeed < 0) this.rotSpeed += PLAYER_ROTATION_SPEED * 0.001;
+            else this.rotSpeed += PLAYER_ROTATION_SPEED * 0.008;
+            this._addParticles(this.angle - HALF_PI);
+        }
+
+        this.angle += this.rotSpeed;
+
+        if (!this.leftThrust && !this.rightThrust) {
+            this.rotSpeed *= 0.999;
+        }
+
+        // Limits
+        let speed = dist(0, 0, this.vx, this.vy);
+        if (speed > MAX_VELOCITY) {
+            this.vx *= (MAX_VELOCITY / speed);
+            this.vy *= (MAX_VELOCITY / speed);
+        }
+        if (abs(this.rotSpeed) > MAX_ROTATION) {
+            this.rotSpeed = Math.sign(this.rotSpeed) * MAX_ROTATION;
+        }
+
+        // Position update
+        this.x = mod(this.x + (this.vx - refVx), WIDTH);
+        this.y = mod(this.y + (this.vy - refVy), HEIGHT);
+
+        // Particle update
+        if (this.thrusterActive) {
+            for (let i = this.particles.length - 1; i >= 0; i--) {
+                if (this.particles[i].update()) {
+                    this.particles.splice(i, 1);
+                }
+            }
+        }
+    }
+
+    _addParticles(angleOffset) {
+        if (this.thrusterActive && random() < 0.7) {
+            let px = this.x + cos(angleOffset) * this.radius;
+            let py = this.y + sin(angleOffset) * this.radius;
+            let varAngle = random(-0.3, 0.3);
+            this.particles.push(new ThrusterParticle(px, py, angleOffset + varAngle));
+        }
+    }
+
+    draw(showVec) {
+        // Draw Particles
+        this.particles.forEach(p => p.draw());
+
+        // Draw Ship Body
+        push();
+        translate(this.x, this.y);
+        rotate(this.angle);
+        fill(this.color);
+        noStroke();
+        triangle(this.radius * 1.5, 0, 
+                 this.radius * cos(2.5), this.radius * sin(2.5), 
+                 this.radius * cos(-2.5), this.radius * sin(-2.5));
+        pop();
+
+        if (showVec) {
+            stroke(palette.white);
+            strokeWeight(2);
+            line(this.x, this.y, this.x + this.vx * 10, this.y + this.vy * 10);
+        }
+    }
+
+    drawForceVectors() {
+        if (this.forwardThrust || this.backThrust || this.leftThrust || this.rightThrust) {
+            let fScale = 50;
+            let fx = 0, fy = 0;
+
+            if (this.forwardThrust) {
+                fx += cos(this.angle) * fScale;
+                fy += sin(this.angle) * fScale;
+            }
+            if (this.backThrust) {
+                fx -= cos(this.angle) * fScale * 0.5;
+                fy -= sin(this.angle) * fScale * 0.5;
+            }
+            if (this.leftThrust) {
+                fx += cos(this.angle - HALF_PI) * fScale * 0.3;
+                fy += sin(this.angle - HALF_PI) * fScale * 0.3;
+            }
+            if (this.rightThrust) {
+                fx += cos(this.angle + HALF_PI) * fScale * 0.3;
+                fy += sin(this.angle + HALF_PI) * fScale * 0.3;
+            }
+
+            if (fx !== 0 || fy !== 0) {
+                drawArrow(this.x, this.y, this.x + fx, this.y + fy, palette.force, 15);
+            }
+        }
+    }
+}
+
+class PhysicsObject {
+    constructor(x, y, mType, col, id) {
+        this.id = id;
+        this.x = x; this.y = y;
+        this.origX = x; this.origY = y;
+        this.mType = mType;
+        this.color = col;
+        this.radius = 20;
+        this.speed = 2;
+        this.angle = 0;
+        this.harmAngle = HALF_PI;
+        this.vx = 0; this.vy = 0;
+        this.thrusterActive = false;
+        this.particles = [];
+    }
+
+    updateVelocity() {
+        if (this.mType === "harmonic_lr") {
+            let amp = WIDTH / 4;
+            let freq = 0.01;
+            this.harmAngle += freq;
+            this.vx = amp * freq * cos(this.harmAngle);
+            this.vy = 0;
+        } else if (this.mType === "uniform_lr") {
+            this.vx = this.speed; this.vy = 0;
+        } else if (this.mType === "uniform_bt") {
+            this.vx = 0; this.vy = -this.speed;
+        } else if (this.mType === "circular") {
+            this.angle += 0.02;
+            this.vx = -100 * sin(this.angle) * 0.02;
+            this.vy = 100 * cos(this.angle) * 0.02;
+        }
+
+        if (this.color === palette.green) {
+            this.vx *= 0.5; this.vy *= 0.5;
+        } else if (this.color === palette.blue) {
+            this.vx *= 2; this.vy *= 2;
+        }
+    }
+
+    updatePosition(refVx, refVy, currentRef) {
+        // If this object IS the reference frame, it should lock to screen center for flawless visual
+        if (currentRef === this.id && this.mType === "harmonic_lr") {
+            this.x = WIDTH / 2;
+            this.y = HEIGHT / 2;
+        } else {
+            this.x = mod(this.x + (this.vx - refVx), WIDTH);
+            this.y = mod(this.y + (this.vy - refVy), HEIGHT);
+        }
+
+        if (this.thrusterActive) {
+            this._updateParticles();
+        }
+    }
+
+    _updateParticles() {
+        if (random() < 0.7 && this.thrusterActive) {
+            let tAngle = null;
+            if (this.mType === "circular") {
+                tAngle = this.angle + TWO_PI;
+            } else if (this.mType === "harmonic_lr") {
+                let forceAng = (PI > this.harmAngle % TWO_PI) ? PI : 0;
+                tAngle = forceAng + PI;
+            }
+
+            if (tAngle !== null) {
+                let px = this.x + cos(tAngle) * this.radius;
+                let py = this.y + sin(tAngle) * this.radius;
+                let varAngle = random(-0.3, 0.3);
+                this.particles.push(new ThrusterParticle(px, py, tAngle + varAngle));
+            }
+        }
+
+        for (let i = this.particles.length - 1; i >= 0; i--) {
+            if (this.particles[i].update()) {
+                this.particles.splice(i, 1);
+            }
+        }
+    }
+
+    draw(showVec) {
+        this.particles.forEach(p => p.draw());
+
+        noStroke();
+        fill(this.color);
+        circle(this.x, this.y, this.radius * 2);
+
+        if (showVec) {
+            stroke(palette.white);
+            strokeWeight(2);
+            line(this.x, this.y, this.x + this.vx * 10, this.y + this.vy * 10);
+        }
+    }
+
+    drawForceVectors(markers) {
+        if (this.mType === "circular") {
+            let redM = markers.find(m => m.color === palette.red);
+            if (redM) {
+                let dx = redM.x - this.x;
+                let dy = redM.y - this.y;
+                let d = dist(0, 0, dx, dy);
+                if (d > 0) {
+                    dx /= d; dy /= d;
+                    drawArrow(this.x, this.y, this.x + dx * 50, this.y + dy * 50, palette.force, 15);
+                }
+            }
+        } else if (this.mType === "harmonic_lr") {
+            let blueM = markers.find(m => m.color === palette.blue);
+            if (blueM) {
+                let dx = blueM.x - this.x;
+                let dy = blueM.y - this.y;
+                let d = dist(0, 0, dx, dy);
+                if (d > 0) {
+                    dx /= d; dy /= d;
+                    drawArrow(this.x, this.y, this.x + dx * 50, this.y + dy * 50, palette.force, 15);
+                }
+            }
+        }
+    }
+}
+
+// --- Arrow Helper ---
+function drawArrow(x1, y1, x2, y2, col, arrowSize) {
+    stroke(col);
+    strokeWeight(3);
+    line(x1, y1, x2, y2);
+    
+    let angle = atan2(y2 - y1, x2 - x1);
+    let p1x = x2 - arrowSize * cos(angle - PI/6);
+    let p1y = y2 - arrowSize * sin(angle - PI/6);
+    let p2x = x2 - arrowSize * cos(angle + PI/6);
+    let p2y = y2 - arrowSize * sin(angle + PI/6);
+    
+    line(x2, y2, p1x, p1y);
+    line(x2, y2, p2x, p2y);
+}
+
+// --- UI Logic ---
+function drawConsole() {
+    let cb = buttons.console;
+    
+    fill(palette.gray);
+    noStroke();
+    rect(cb.x, cb.y, cb.w, cb.h);
+
+    buttons.forEach(b => {
+        let active = false;
+        if (b.type === 'ref' && selectedRef === b.id) active = true;
+        if (b.type === 'triangle' && showTrails) active = true;
+        if (b.id === 'force' && showForces) active = true;
+        if (b.id === 'thrust' && showThrusters) active = true;
+
+        push();
+        translate(b.x, b.y);
+        
+        let col = b.c;
+        if (active) col = color(min(red(b.c)+50, 255), min(green(b.c)+50, 255), min(blue(b.c)+50, 255));
+        
+        fill(col);
+        noStroke();
+
+        if (b.type === 'triangle') {
+            triangle(0, b.h, b.w, b.h, b.w/2, 0);
+        } else {
+            rect(0, 0, b.w, b.h);
+        }
+
+        // Draw Labels
+        if (b.label !== "") {
+            let textColor = (b.c === palette.red || b.c === palette.purple || b.c === palette.orange) ? palette.white : palette.bg;
+            fill(textColor);
+            textAlign(CENTER, CENTER);
+            textSize(12);
+            textStyle(BOLD);
+            text(b.label, b.w/2, b.h/2);
+        }
+
+        pop();
+    });
+}
+
+function drawTextInfo() {
+    let refNames = {"0": "Green", "1": "Blue", "2": "Yellow", "3": "Cyan", "-1": "Stars/Absolute"};
+    
+    fill(palette.white);
+    noStroke();
+    textAlign(LEFT, TOP);
+    textSize(14);
+    
+    text(`Reference: ${refNames[selectedRef.toString()]}`, 10, 10);
+    text(`Thrusters: ${showThrusters ? 'ON' : 'OFF'}`, 10, 30);
+    text(`Arrow Keys: Control Player Ship (Pink)`, 10, 50);
+}
+
+function mousePressed() {
+    for (let b of buttons) {
+        let clicked = false;
+        if (b.type === 'triangle') {
+            clicked = mouseX > b.x && mouseX < b.x + b.w && mouseY > b.y && mouseY < b.y + b.h;
+        } else {
+            clicked = mouseX > b.x && mouseX < b.x + b.w && mouseY > b.y && mouseY < b.y + b.h;
+        }
+
+        if (clicked) {
+            if (b.id === -1) {
+                freezeStars = true;
+                selectedRef = -1;
+            } else if (b.id === 'trail') {
+                showTrails = !showTrails;
+            } else if (b.id === 'force') {
+                showForces = !showForces;
+            } else if (b.id === 'thrust') {
+                showThrusters = !showThrusters;
+                objects.forEach(o => {
+                    if (o.color === palette.yellow || o.color === palette.cyan) o.thrusterActive = showThrusters;
+                });
+                playerShip.thrusterActive = showThrusters;
+            } else if (b.type === 'ref') {
+                selectedRef = b.id;
+                freezeStars = false;
+            }
+            return;
+        }
+    }
+}
+</script>
+</body>
+</html>

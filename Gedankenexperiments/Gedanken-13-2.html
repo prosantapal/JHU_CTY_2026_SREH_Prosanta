@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Moving Sticks Measuring Device</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #030305;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+            color: white;
+            user-select: none;
+        }
+        canvas {
+            box-shadow: 0 0 50px rgba(0, 0, 0, 1);
+            border-radius: 8px;
+        }
+    </style>
+</head>
+<body>
+<script>
+// --- Constants & Globals ---
+const WIDTH = 1000;
+const HEIGHT = 600;
+
+// Physics Constants
+const C = 2500.0; // Slow simulation by 50% (5000 * 0.5)
+const STICK_WIDTH = 10;
+const HORIZONTAL_LENGTHS = [160, 260, 180, 220];
+const SPEEDS = [125, 350, 1100, 1450]; // px/s
+const SPEED_FRACS = SPEEDS.map(v => v / C);
+const SENSOR_X = WIDTH / 2;
+
+// State Variables
+let isAnimating = false;
+let movingPos = { x: 0, y: HEIGHT / 2 };
+let movingVelocity = { x: 0, y: 0 };
+let currentStick = 0; // 0-3
+let triggered = false;
+let circles = [];
+let triggerTime = null;
+let timeDisplayed = false;
+let arrivalTime = null;
+
+let buttons = [];
+let palette;
+
+// --- Expanding Circle Class ---
+class ExpandingCircle {
+    constructor(x, y, t_start, sensor_x, velocity) {
+        this.x = x;
+        this.y = y;
+        this.t_start = t_start;
+        this.radius = 0;
+        this.sensor_x = sensor_x;
+        this.arrival_time = null;
+        this.finished = false;
+        this.v = velocity;
+    }
+
+    update(t_now) {
+        let dt = t_now - this.t_start;
+        let targetRadius = abs(this.sensor_x - this.x);
+        
+        this.radius = this.finished ? targetRadius : this.v * dt;
+        
+        if (!this.finished && this.radius >= targetRadius) {
+            this.arrival_time = t_now;
+            this.radius = targetRadius;
+            this.finished = true;
+        }
+    }
+
+    draw() {
+        if (this.radius > 1) {
+            setGlow(palette.yellow, 15);
+            noFill();
+            stroke(palette.yellow);
+            strokeWeight(3);
+            circle(this.x, this.y, this.radius * 2);
+            clearGlow();
+        }
+    }
+}
+
+function setup() {
+    createCanvas(WIDTH, HEIGHT);
+    
+    palette = {
+        bg: color(5, 8, 12),
+        red: color(255, 80, 80),
+        blue: color(60, 160, 255),
+        yellow: color(255, 255, 80),
+        sensor: color(100, 255, 100, 150),
+        white: color(255),
+        gray: color(180),
+        btnBg: color(40, 45, 50),
+        btnActive: color(100, 110, 120)
+    };
+
+    setupUI();
+}
+
+function setupUI() {
+    let btnW = 90;
+    let btnH = 42;
+    let margin = 16;
+    let startX = 110;
+    let startY = HEIGHT - btnH - 30;
+
+    for (let i = 0; i < 4; i++) {
+        buttons.push({
+            idx: i,
+            x: startX + i * (btnW + margin),
+            y: startY,
+            w: btnW, h: btnH,
+            label: `${i + 1}-H`
+        });
+    }
+}
+
+// --- Native Glow Helper ---
+function setGlow(clr, blurSize) {
+    drawingContext.shadowBlur = blurSize;
+    drawingContext.shadowColor = clr.toString();
+}
+
+function clearGlow() {
+    drawingContext.shadowBlur = 0;
+}
+
+// --- Physics Logic ---
+function getContractedLength() {
+    let vfrac = SPEED_FRACS[currentStick];
+    let origLength = HORIZONTAL_LENGTHS[currentStick];
+    if (vfrac > 0) {
+        let gamma = 1.0 / sqrt(1 - vfrac * vfrac);
+        return origLength / gamma;
+    }
+    return origLength;
+}
+
+function launchStick(idx) {
+    isAnimating = true;
+    currentStick = idx;
+    movingVelocity = { x: SPEEDS[idx], y: 0 };
+    triggered = false;
+    triggerTime = null;
+    circles = [];
+    timeDisplayed = false;
+    arrivalTime = null;
+    
+    let contracted = getContractedLength();
+    movingPos = { x: -contracted / 2, y: HEIGHT / 2 };
+}
+
+function resetSim() {
+    isAnimating = false;
+    triggered = false;
+    triggerTime = null;
+    circles = [];
+    timeDisplayed = false;
+    arrivalTime = null;
+}
+
+// --- Main Draw Loop ---
+function draw() {
+    background(palette.bg);
+    let dt = deltaTime / 1000.0;
+    let t_now = millis() / 1000.0;
+
+    // Update Physics
+    if (isAnimating) {
+        movingPos.x += movingVelocity.x * dt;
+
+        // Check if stick's center crosses the sensor line
+        if (!triggered && movingPos.x >= SENSOR_X) {
+            triggered = true;
+            triggerTime = t_now;
+            
+            let contracted = getContractedLength();
+            let y = movingPos.y;
+            
+            // Emit expanding circles from front and back ends
+            circles.push(new ExpandingCircle(SENSOR_X + contracted / 2, y, t_now, SENSOR_X, C));
+            circles.push(new ExpandingCircle(SENSOR_X - contracted / 2, y, t_now, SENSOR_X, C));
+        }
+
+        // Stop animating when stick is off right edge
+        if (movingPos.x - getContractedLength() / 2 > WIDTH) {
+            isAnimating = false;
+        }
+    }
+
+    // Update Circles
+    for (let c of circles) {
+        c.update(t_now);
+    }
+
+    // Check if both signals arrived
+    if (triggered && circles.length > 0) {
+        let allArrived = circles.every(c => c.finished);
+        if (allArrived && !timeDisplayed) {
+            arrivalTime = circles[0].arrival_time - triggerTime;
+            timeDisplayed = true;
+        }
+    }
+
+    // Draw Elements
+    drawSensorLine();
+    
+    if (isAnimating || triggered) {
+        drawStick(movingPos.x, movingPos.y, getContractedLength(), palette.blue);
+    }
+
+    for (let c of circles) {
+        c.draw();
+    }
+
+    drawUI();
+}
+
+function drawStick(x, y, len, col) {
+    setGlow(col, 15);
+    rectMode(CENTER);
+    fill(red(col), green(col), blue(col), 200);
+    stroke(palette.white);
+    strokeWeight(2);
+    rect(x, y, len, STICK_WIDTH, 4);
+    clearGlow();
+}
+
+function drawSensorLine() {
+    setGlow(palette.sensor, 10);
+    stroke(palette.sensor);
+    strokeWeight(2);
+    drawingContext.setLineDash([10, 10]);
+    line(SENSOR_X, 0, SENSOR_X, HEIGHT);
+    drawingContext.setLineDash([]);
+    clearGlow();
+
+    noStroke();
+    fill(palette.sensor);
+    textSize(18);
+    textStyle(BOLD);
+    textAlign(LEFT, TOP);
+    text("Sensor", SENSOR_X + 15, 20);
+}
+
+function drawUI() {
+    // HUD Instructions
+    fill(palette.white);
+    noStroke();
+    textAlign(LEFT, TOP);
+    textSize(16);
+    textStyle(BOLD);
+    
+    textSize(14);
+    textStyle(NORMAL);
+    fill(200);
+    text("1. Click a button to launch a stick. Press [R] to reset.", 110, 50);
+    text("2. When the stick's center crosses the green sensor line,", 110, 70);
+    text("   light flashes emit from each end (C = 2500 px/s).", 110, 90);
+    text("3. The sensor displays the time for the signals to reach it.", 110, 110);
+
+    // Arrival Time Display
+    if (timeDisplayed && arrivalTime !== null) {
+        fill(palette.yellow);
+        textSize(24);
+        textStyle(BOLD);
+        text(`Sensor time: ${arrivalTime.toFixed(4)} s`, SENSOR_X + 30, HEIGHT / 2 - 50);
+    }
+
+    // Draw Buttons
+    rectMode(CORNER);
+    for (let b of buttons) {
+        let isSelected = isAnimating && currentStick === b.idx;
+        
+        if (isSelected) {
+            fill(palette.btnActive);
+            stroke(palette.white);
+            strokeWeight(2);
+            setGlow(palette.white, 10);
+        } else {
+            fill(palette.btnBg);
+            stroke(80);
+            strokeWeight(1);
+            clearGlow();
+        }
+
+        rect(b.x, b.y, b.w, b.h, 6);
+        clearGlow();
+
+        fill(palette.white);
+        noStroke();
+        textAlign(CENTER, CENTER);
+        textSize(16);
+        textStyle(BOLD);
+        text(b.label, b.x + b.w / 2, b.y + b.h / 2);
+    }
+}
+
+// --- Interactions ---
+function mousePressed() {
+    for (let b of buttons) {
+        if (mouseX > b.x && mouseX < b.x + b.w && mouseY > b.y && mouseY < b.y + b.h) {
+            launchStick(b.idx);
+            break;
+        }
+    }
+}
+
+function keyPressed() {
+    if (key.toLowerCase() === 'r') {
+        resetSim();
+    }
+}
+</script>
+</body>
+</html>

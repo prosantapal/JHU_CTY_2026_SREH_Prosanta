@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gauss's Law</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #030305;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+            color: white;
+            user-select: none; /* Prevents text highlighting while dragging */
+        }
+        canvas {
+            box-shadow: 0 0 50px rgba(0, 0, 0, 1);
+            border-radius: 8px;
+        }
+    </style>
+</head>
+<body>
+<script>
+// --- Constants & Globals ---
+const WIDTH = 900;
+const HEIGHT = 700;
+
+// Physics Constants
+const EPSILON = 1e-6;
+const STEP_SIZE = 4;
+const DENSITY = 36; // Lines per unit of charge
+const NEAR_CHARGE_DIST = 20;
+
+let palette;
+let charges = [];
+let currentChargeStrength = 1;
+
+// Gaussian Surface (Circle)
+let gaussSurface = {
+    active: true,
+    x: WIDTH / 2,
+    y: HEIGHT / 2,
+    r: 80,
+    dragging: false
+};
+
+// Cached visual lines to save CPU
+let fieldLines = [];
+
+// UI Buttons
+let buttons = [];
+
+function setup() {
+    createCanvas(WIDTH, HEIGHT);
+    
+    palette = {
+        bg: color(5, 8, 12),
+        pos: color(255, 50, 80),    // Neon Red
+        neg: color(50, 150, 255),   // Neon Blue
+        white: color(255, 255, 255),
+        surface: color(0, 255, 150), // Neon Green
+        uiBg: color(15, 20, 25, 220)
+    };
+
+    setupUI();
+    updateFieldLines();
+}
+
+function setupUI() {
+    let bw = 40, bh = 38, spc = 8;
+    let cx = 30;
+    let cy = HEIGHT - bh - 30;
+
+    // Control Buttons
+    buttons.push({ id: 'dec', x: cx, y: cy, w: bw, h: bh, c: palette.neg, label: "-" });
+    buttons.push({ id: 'inc', x: cx + bw + spc, y: cy, w: bw, h: bh, c: palette.pos, label: "+" });
+    buttons.push({ id: 'clear', x: cx + 2*(bw+spc), y: cy, w: bw*2, h: bh, c: palette.white, label: "CLEAR" });
+    buttons.push({ id: 'gauss', x: cx + 4*(bw+spc), y: cy, w: bw*3.5, h: bh, c: palette.surface, label: "TOGGLE SURFACE" });
+}
+
+// --- Native Glow Helper ---
+function setGlow(clr, blurSize) {
+    drawingContext.shadowBlur = blurSize;
+    drawingContext.shadowColor = clr.toString();
+}
+
+function clearGlow() {
+    drawingContext.shadowBlur = 0;
+}
+
+// --- Physics Calculations ---
+function getElectricField(x, y) {
+    let Ex = 0, Ey = 0;
+    for (let c of charges) {
+        let dx = x - c.x;
+        let dy = y - c.y;
+        let r = max(sqrt(dx*dx + dy*dy), EPSILON);
+        Ex += c.q * dx / (r*r*r);
+        Ey += c.q * dy / (r*r*r);
+    }
+    return { Ex, Ey };
+}
+
+function traceFieldLine(startX, startY, sourceCharge, forward = true) {
+    let points = [];
+    let x = startX;
+    let y = startY;
+    let dir = forward ? 1 : -1;
+    
+    for (let i = 0; i < 1000; i++) {
+        points.push({x: x, y: y});
+        
+        // Proximity Check
+        let nearCharge = false;
+        let minDist = Infinity;
+        let targetC = null;
+
+        for (let c of charges) {
+            let d = dist(x, y, c.x, c.y);
+            if (d < minDist) {
+                minDist = d;
+                targetC = c;
+            }
+        }
+
+        if (targetC && minDist < NEAR_CHARGE_DIST) {
+            // Stop if approaching opposite charge
+            if ((targetC.q > 0 && !forward) || (targetC.q < 0 && forward)) {
+                if (targetC.q < 0 && minDist < 5) {
+                    points.push({x: targetC.x, y: targetC.y});
+                }
+                break;
+            }
+            if (minDist < 5) break;
+        }
+
+        let E = getElectricField(x, y);
+        let magE = sqrt(E.Ex*E.Ex + E.Ey*E.Ey);
+        
+        if (magE < EPSILON) break;
+
+        x += dir * STEP_SIZE * (E.Ex / magE);
+        y += dir * STEP_SIZE * (E.Ey / magE);
+
+        if (x < 0 || x > WIDTH || y < 0 || y > HEIGHT) break;
+    }
+    return points;
+}
+
+function updateFieldLines() {
+    fieldLines = [];
+    
+    for (let c of charges) {
+        if (c.q === 0) continue;
+        
+        let col = c.q > 0 ? palette.pos : palette.neg;
+        let linesPerCharge = floor(DENSITY * abs(c.q));
+        
+        if (c.q > 0) {
+            // Positive: emanate outward
+            for (let i = 0; i < linesPerCharge; i++) {
+                let angle = map(i, 0, linesPerCharge, 0, TWO_PI);
+                let sx = c.x + 15 * cos(angle);
+                let sy = c.y + 15 * sin(angle);
+                let pts = traceFieldLine(sx, sy, c, true);
+                fieldLines.push({ points: pts, color: col, sourceQ: c.q });
+            }
+        } else {
+            // Negative: trace backwards (away from charge) to draw lines coming IN
+            for (let i = 0; i < linesPerCharge; i++) {
+                let angle = map(i, 0, linesPerCharge, 0, TWO_PI);
+                let sx = c.x + 15 * cos(angle);
+                let sy = c.y + 15 * sin(angle);
+                let pts = traceFieldLine(sx, sy, c, false);
+                fieldLines.push({ points: pts, color: col, sourceQ: c.q });
+            }
+        }
+    }
+}
+
+function getGaussStats() {
+    let qEnc = 0;
+    for (let c of charges) {
+        if (dist(c.x, c.y, gaussSurface.x, gaussSurface.y) <= gaussSurface.r) {
+            qEnc += c.q;
+        }
+    }
+    
+    // In a 2D slice, flux is proportional to the number of lines crossing the boundary.
+    // By Gauss's Law, Net Flux strictly equals Q_enc. 
+    let netLines = DENSITY * qEnc;
+    
+    return { qEnc: qEnc, flux: netLines };
+}
+
+// --- Main Draw Loop ---
+function draw() {
+    background(palette.bg);
+
+    // 1. Dragging Gaussian Surface
+    if (gaussSurface.dragging) {
+        gaussSurface.x = mouseX;
+        gaussSurface.y = mouseY;
+    }
+
+    // 2. Draw Field Lines
+    noFill();
+    for (let fl of fieldLines) {
+        // Soft glowing lines
+        stroke(red(fl.color), green(fl.color), blue(fl.color), 100);
+        strokeWeight(2);
+        beginShape();
+        for (let p of fl.points) {
+            vertex(p.x, p.y);
+        }
+        endShape();
+    }
+
+    // 3. Draw Charges
+    for (let c of charges) {
+        let col = c.q > 0 ? palette.pos : palette.neg;
+        let symbol = c.q > 0 ? "+" : ""; // Negative sign handled by minus
+        
+        push();
+        translate(c.x, c.y);
+        setGlow(col, 20);
+        fill(col);
+        noStroke();
+        circle(0, 0, 30);
+        
+        fill(255);
+        clearGlow();
+        textAlign(CENTER, CENTER);
+        textSize(16);
+        textStyle(BOLD);
+        text(`${symbol}${c.q}`, 0, -1);
+        pop();
+    }
+
+    // 4. Draw Gaussian Surface
+    if (gaussSurface.active) {
+        let stats = getGaussStats();
+        
+        push();
+        translate(gaussSurface.x, gaussSurface.y);
+        
+        // Dashed glowing circle
+        stroke(palette.surface);
+        strokeWeight(3);
+        setGlow(palette.surface, 15);
+        noFill();
+        drawingContext.setLineDash([10, 10]); // Make it look like a mathematical boundary
+        circle(0, 0, gaussSurface.r * 2);
+        drawingContext.setLineDash([]); // Reset
+        clearGlow();
+        
+        // Draw Stats Readout
+        fill(255);
+        noStroke();
+        textAlign(CENTER, CENTER);
+        textSize(16);
+        textStyle(BOLD);
+        
+        // Background for text readability
+        fill(10, 15, 20, 200);
+        rect(-60, gaussSurface.r + 10, 120, 50, 5);
+
+        fill(palette.white);
+        text(`Q_enc: ${stats.qEnc}`, 0, gaussSurface.r + 25);
+        fill(palette.surface);
+        text(`Flux (Φ): ${stats.flux}`, 0, gaussSurface.r + 45);
+        
+        pop();
+    }
+
+    // 5. Draw UI
+    drawUI();
+}
+
+function drawUI() {
+    // Top Left Info
+    fill(255);
+    noStroke();
+    textAlign(LEFT, TOP);
+    textSize(24);
+    textStyle(BOLD);
+    text("Maxwell's First Equation", 20, 20);
+    
+    textSize(14);
+    textStyle(NORMAL);
+    fill(180, 180, 200);
+    text("Click empty space to place a charge (Max 2)", 20, 55);
+    text("Drag the glowing circle to measure electric flux", 20, 75);
+    
+    // Bottom Controls Background
+    fill(palette.uiBg);
+    stroke(80);
+    strokeWeight(1);
+    rect(15, HEIGHT - 90, 350, 75, 8);
+
+    // Current Charge Indicator
+    fill(255);
+    noStroke();
+    textAlign(LEFT, CENTER);
+    let sign = currentChargeStrength > 0 ? "+" : "";
+    text(`NEXT CHARGE: ${sign}${currentChargeStrength}`, 30, HEIGHT - 75);
+
+    // Buttons
+    buttons.forEach(b => {
+        let hover = mouseX > b.x && mouseX < b.x + b.w && mouseY > b.y && mouseY < b.y + b.h;
+        
+        push();
+        translate(b.x, b.y);
+        if (hover) {
+            setGlow(b.c, 15);
+            fill(red(b.c)+40, green(b.c)+40, blue(b.c)+40);
+        } else {
+            fill(b.c);
+        }
+        
+        noStroke();
+        rect(0, 0, b.w, b.h, 6);
+        
+        let textColor = (b.c === palette.white || b.c === palette.surface) ? palette.bg : palette.white;
+        fill(textColor);
+        textAlign(CENTER, CENTER);
+        textSize(14);
+        textStyle(BOLD);
+        text(b.label, b.w/2, b.h/2);
+        
+        clearGlow();
+        pop();
+    });
+}
+
+// --- Interactions ---
+function mousePressed() {
+    // 1. Check UI Buttons
+    for (let b of buttons) {
+        if (mouseX > b.x && mouseX < b.x + b.w && mouseY > b.y && mouseY < b.y + b.h) {
+            if (b.id === 'inc') currentChargeStrength = min(5, currentChargeStrength + 1);
+            if (b.id === 'dec') currentChargeStrength = max(-5, currentChargeStrength - 1);
+            if (b.id === 'clear') {
+                charges = [];
+                updateFieldLines();
+            }
+            if (b.id === 'gauss') gaussSurface.active = !gaussSurface.active;
+            return; // Don't place a charge if clicking a button
+        }
+    }
+
+    // 2. Check Gaussian Surface Drag
+    if (gaussSurface.active) {
+        let d = dist(mouseX, mouseY, gaussSurface.x, gaussSurface.y);
+        // If clicking on or near the boundary of the circle
+        if (d < gaussSurface.r + 20) {
+            gaussSurface.dragging = true;
+            return;
+        }
+    }
+
+    // 3. Place Charge
+    // Don't place if clicking in UI areas
+    if (mouseY > HEIGHT - 100 && mouseX < 380) return; 
+
+    if (charges.length < 2 && currentChargeStrength !== 0) {
+        charges.push({ x: mouseX, y: mouseY, q: currentChargeStrength });
+        updateFieldLines(); // Recalculate fields on change
+    }
+}
+
+function mouseReleased() {
+    gaussSurface.dragging = false;
+}
+</script>
+</body>
+</html>

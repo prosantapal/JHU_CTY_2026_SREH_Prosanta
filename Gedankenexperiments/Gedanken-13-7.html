@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Horizontal-Vertical-Horizontal Light Clocks</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #030305;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+            color: white;
+            user-select: none;
+        }
+        canvas {
+            box-shadow: 0 0 50px rgba(0, 0, 0, 1);
+            border-radius: 8px;
+        }
+    </style>
+</head>
+<body>
+<script>
+// --- Constants & Globals ---
+const WIDTH = 1000;
+const HEIGHT = 600;
+const FPS = 60;
+
+// Physics constants
+const C = 50.0; // Speed of light 
+const INITIAL_CLOCK_LENGTH = 150;
+const CLOCK_WIDTH = 10;
+
+// Origin points
+const ORIGIN_X = WIDTH / 4;
+const ORIGIN_Y = HEIGHT / 2;
+const STATIONARY_D = 200;
+const STATIONARY_X = ORIGIN_X + Math.floor(0.8 * STATIONARY_D);
+const STATIONARY_Y = ORIGIN_Y + Math.floor(1.2 * STATIONARY_D);
+
+let sim;
+let palette;
+
+function setup() {
+    createCanvas(WIDTH, HEIGHT);
+    frameRate(FPS);
+    
+    palette = {
+        bg: color(5, 8, 12),
+        red: color(255, 50, 80),     // Stationary Clock
+        cyan: color(0, 200, 255),    // Moving Clock Right/Top
+        magenta: color(255, 50, 200),// Moving Clock Left
+        yellow: color(255, 255, 100),// Photons Right
+        green: color(50, 255, 100),  // Photon Top
+        white: color(255),
+        gray: color(100, 110, 120),
+        lightGray: color(180, 190, 200),
+        darkGray: color(30, 35, 40)
+    };
+
+    sim = new Simulation();
+}
+
+// --- Native Glow Helper ---
+function setGlow(clr, blurSize) {
+    drawingContext.shadowBlur = blurSize;
+    drawingContext.shadowColor = clr.toString();
+}
+
+function clearGlow() {
+    drawingContext.shadowBlur = 0;
+}
+
+// --- Digital Clock Class ---
+class DigitalClock {
+    constructor() {
+        this.display_time = 0.0;
+        this.next_tick = 0.5;
+        this.next_tick_time = null;
+        this.period = 1.0;
+    }
+
+    schedule_first_tick(first_tick_time) {
+        this.next_tick_time = first_tick_time;
+        this.display_time = 0.0;
+        this.next_tick = 0.5;
+    }
+
+    set_period(period) {
+        this.period = period;
+    }
+
+    try_tick(sim_time) {
+        while (this.next_tick_time !== null && sim_time >= this.next_tick_time) {
+            this.display_time = this.next_tick;
+            this.next_tick += 1.0;
+            this.next_tick_time += this.period;
+        }
+    }
+
+    get_display() {
+        return nf(this.display_time, 2, 1);
+    }
+}
+
+// --- Simulation Class ---
+class Simulation {
+    constructor() {
+        this.speed_fraction = 0.0;
+        this.is_animating = false;
+        this.is_frozen = false;
+        this.time = 0.0;
+        this.clock_pos_x = 0.0;
+
+        this.st_time = 0.0;
+        this.moving_time = 0.0;
+
+        this.horizontal_length = INITIAL_CLOCK_LENGTH;
+        this.vertical_length = INITIAL_CLOCK_LENGTH;
+
+        // Moving clock photons
+        this.h_photon = { x: 0, y: 0, vx: 0, vy: 0, active: false };
+        this.v_photon = { x: 0, y: 0, vx: 0, vy: 0, active: false };
+        this.h2_photon = { x: 0, y: 0, vx: 0, vy: 0, active: false };
+
+        // Stationary clock photons
+        this.st_h_photon = { x: 0, y: 0, vx: 0, vy: 0, active: false };
+        this.st_v_photon = { x: 0, y: 0, vx: 0, vy: 0, active: false };
+
+        // Digital Clocks
+        this.digital_right = new DigitalClock();
+        this.digital_left = new DigitalClock();
+        this.digital_top = new DigitalClock();
+
+        this.show_trails = false;
+        this.show_clocks = true;
+        
+        this.h_trail = [];
+        this.v_trail = [];
+        this.h2_trail = [];
+        this.st_h_trail = [];
+        this.st_v_trail = [];
+
+        this.step_frame_requested = false;
+    }
+
+    update_clock_length() {
+        if (this.speed_fraction === 0) {
+            this.horizontal_length = INITIAL_CLOCK_LENGTH;
+        } else {
+            let gamma = 1.0 / sqrt(1 - this.speed_fraction * this.speed_fraction);
+            this.horizontal_length = INITIAL_CLOCK_LENGTH / gamma;
+        }
+    }
+
+    start_animation() {
+        this.is_animating = true;
+        this.time = 0.0;
+        this.st_time = 0.0;
+        this.moving_time = 0.0;
+        this.clock_pos_x = 0.0;
+
+        this.h_photon = { x: 0, y: 0, vx: C, vy: 0, active: true };
+        this.h2_photon = { x: 0, y: 0, vx: -C, vy: 0, active: true };
+        
+        let v_horizontal = this.speed_fraction * C;
+        let v_vertical = this.speed_fraction < 1.0 ? sqrt(C * C - v_horizontal * v_horizontal) : 0;
+        this.v_photon = { x: 0, y: 0, vx: v_horizontal, vy: v_vertical, active: true };
+
+        this.st_h_photon = { x: 0, y: 0, vx: C, vy: 0, active: true };
+        this.st_v_photon = { x: 0, y: 0, vx: 0, vy: C, active: true };
+
+        let L = this.horizontal_length;
+        let v = this.speed_fraction * C;
+
+        // Simultaneity Time Math
+        let t_right = (C - v) !== 0 ? L / (C - v) : Infinity;
+        let t_left = (C + v) !== 0 ? L / (C + v) : Infinity;
+        let denom = C > v ? sqrt(C * C - v * v) : 1e-8;
+        let t_top = denom !== 0 ? this.vertical_length / denom : Infinity;
+
+        let period = (C - v) !== 0 && (C + v) !== 0 ? L / (C + v) + L / (C - v) : Infinity;
+        let period_top = denom !== 0 ? 2 * this.vertical_length / denom : Infinity;
+
+        this.digital_right.set_period(period);
+        this.digital_left.set_period(period);
+        this.digital_top.set_period(period_top);
+
+        this.digital_right.schedule_first_tick(t_right);
+        this.digital_left.schedule_first_tick(t_left);
+        this.digital_top.schedule_first_tick(t_top);
+
+        this.h_trail = [];
+        this.v_trail = [];
+        this.h2_trail = [];
+        this.st_h_trail = [];
+        this.st_v_trail = [];
+    }
+
+    reset() {
+        this.is_animating = false;
+        this.time = 0.0;
+        this.st_time = 0.0;
+        this.moving_time = 0.0;
+        this.clock_pos_x = 0.0;
+        
+        this.h_photon.active = false;
+        this.v_photon.active = false;
+        this.h2_photon.active = false;
+        this.st_h_photon.active = false;
+        this.st_v_photon.active = false;
+        
+        this.update_clock_length();
+        this.is_frozen = false;
+        this.step_frame_requested = false;
+        
+        this.h_trail = [];
+        this.v_trail = [];
+        this.h2_trail = [];
+        this.st_h_trail = [];
+        this.st_v_trail = [];
+    }
+
+    handle_continuous_input() {
+        if (!this.is_animating) {
+            if (keyIsDown(UP_ARROW)) {
+                this.speed_fraction = min(this.speed_fraction + 0.01, 0.99);
+                this.update_clock_length();
+            }
+            if (keyIsDown(DOWN_ARROW)) {
+                this.speed_fraction = max(this.speed_fraction - 0.01, 0.0);
+                this.update_clock_length();
+            }
+        }
+    }
+
+    update_moving_photon_horizontal(photon, dt) {
+        if (!photon.active) return false;
+        let bounced = false;
+        photon.x += photon.vx * dt;
+        photon.y += photon.vy * dt;
+        if (photon.vx > 0 && photon.x >= this.clock_pos_x + this.horizontal_length) {
+            photon.vx = -C;
+            photon.x = this.clock_pos_x + this.horizontal_length;
+            bounced = true;
+        } else if (photon.vx < 0 && photon.x <= this.clock_pos_x) {
+            photon.vx = C;
+            photon.x = this.clock_pos_x;
+            bounced = true;
+        }
+        return bounced;
+    }
+
+    update_moving_photon_horizontal_neg(photon, dt) {
+        if (!photon.active) return false;
+        let bounced = false;
+        photon.x += photon.vx * dt;
+        photon.y += photon.vy * dt;
+        if (photon.vx < 0 && photon.x <= this.clock_pos_x - this.horizontal_length) {
+            photon.vx = C;
+            photon.x = this.clock_pos_x - this.horizontal_length;
+            bounced = true;
+        } else if (photon.vx > 0 && photon.x >= this.clock_pos_x) {
+            photon.vx = -C;
+            photon.x = this.clock_pos_x;
+            bounced = true;
+        }
+        return bounced;
+    }
+
+    update_moving_photon_vertical(photon, dt) {
+        if (!photon.active) return false;
+        let bounced = false;
+        photon.x += photon.vx * dt;
+        photon.y += photon.vy * dt;
+        let v_horizontal = this.speed_fraction * C;
+        let v_vertical = this.speed_fraction < 1.0 ? sqrt(max(0, C * C - v_horizontal * v_horizontal)) : 0;
+        
+        if (photon.vy > 0 && photon.y >= this.vertical_length) {
+            photon.vy = -v_vertical;
+            photon.vx = v_horizontal;
+            photon.y = this.vertical_length;
+            bounced = true;
+        } else if (photon.vy < 0 && photon.y <= 0) {
+            photon.vy = v_vertical;
+            photon.vx = v_horizontal;
+            photon.y = 0;
+            bounced = true;
+        }
+        return bounced;
+    }
+
+    update_photon(photon, dt, length, horizontal=true) {
+        if (!photon.active) return false;
+        let bounced = false;
+        photon.x += photon.vx * dt;
+        photon.y += photon.vy * dt;
+        if (horizontal) {
+            if (photon.vx > 0 && photon.x >= length) {
+                photon.vx = -C;
+                photon.x = length;
+                bounced = true;
+            } else if (photon.vx < 0 && photon.x <= 0) {
+                photon.vx = C;
+                photon.x = 0;
+                bounced = true;
+            }
+        } else {
+            if (photon.vy > 0 && photon.y >= length) {
+                photon.vy = -C;
+                photon.y = length;
+                bounced = true;
+            } else if (photon.vy < 0 && photon.y <= 0) {
+                photon.vy = C;
+                photon.y = 0;
+                bounced = true;
+            }
+        }
+        return bounced;
+    }
+
+    calculate_continuous_time(dt) {
+        let st_round_trip_time = 2.0 * INITIAL_CLOCK_LENGTH / C;
+        this.st_time += dt / st_round_trip_time;
+        
+        let moving_round_trip_time;
+        if (this.speed_fraction === 0) {
+            moving_round_trip_time = 2.0 * this.horizontal_length / C;
+        } else {
+            let gamma = 1.0 / sqrt(1 - this.speed_fraction * this.speed_fraction);
+            let h_round_trip_time = 2.0 * this.horizontal_length / C * gamma;
+            let v_round_trip_time = 2.0 * this.vertical_length / sqrt(C * C - (this.speed_fraction * C) ** 2);
+            moving_round_trip_time = max(h_round_trip_time, v_round_trip_time);
+        }
+        this.moving_time += dt / moving_round_trip_time;
+    }
+
+    single_step() {
+        if (this.is_animating && this.is_frozen) {
+            this.step_frame_requested = true;
+        }
+    }
+
+    update(dt) {
+        if (!this.is_animating) return;
+
+        this.time += dt;
+        this.clock_pos_x += this.speed_fraction * C * dt;
+
+        this.update_moving_photon_horizontal(this.h_photon, dt);
+        this.update_moving_photon_horizontal_neg(this.h2_photon, dt);
+        this.update_moving_photon_vertical(this.v_photon, dt);
+        this.update_photon(this.st_h_photon, dt, INITIAL_CLOCK_LENGTH, true);
+        this.update_photon(this.st_v_photon, dt, INITIAL_CLOCK_LENGTH, false);
+        this.calculate_continuous_time(dt);
+
+        this.digital_right.try_tick(this.time);
+        this.digital_left.try_tick(this.time);
+        this.digital_top.try_tick(this.time);
+
+        if (this.show_trails) {
+            if (this.h_photon.active) this.h_trail.push({x: this.h_photon.x, y: this.h_photon.y});
+            if (this.h2_photon.active) this.h2_trail.push({x: this.h2_photon.x, y: this.h2_photon.y});
+            if (this.v_photon.active) this.v_trail.push({x: this.v_photon.x, y: this.v_photon.y});
+            if (this.st_h_photon.active) this.st_h_trail.push({x: this.st_h_photon.x, y: this.st_h_photon.y});
+            if (this.st_v_photon.active) this.st_v_trail.push({x: this.st_v_photon.x, y: this.st_v_photon.y});
+            
+            // Trim trails
+            if(this.h_trail.length > 1500) this.h_trail.shift();
+            if(this.h2_trail.length > 1500) this.h2_trail.shift();
+            if(this.v_trail.length > 1500) this.v_trail.shift();
+            if(this.st_h_trail.length > 1500) this.st_h_trail.shift();
+            if(this.st_v_trail.length > 1500) this.st_v_trail.shift();
+        }
+    }
+}
+
+// --- Drawing Functions ---
+function drawTimingCircles() {
+    noFill();
+    let max_radius = min(WIDTH - ORIGIN_X - 50, ORIGIN_Y - 50, ORIGIN_X - 50);
+    
+    for (let r = 50; r <= max_radius; r += 50) {
+        let alpha = map(r, 50, max_radius, 150, 20);
+        stroke(60, 70, 80, alpha);
+        strokeWeight(1);
+        if (r % 100 === 0) strokeWeight(2);
+        circle(ORIGIN_X, ORIGIN_Y, r * 2);
+    }
+}
+
+function drawAxes() {
+    stroke(palette.gray);
+    strokeWeight(2);
+    line(50, ORIGIN_Y, WIDTH - 50, ORIGIN_Y);
+    line(ORIGIN_X, 50, ORIGIN_X, HEIGHT - 50);
+    
+    fill(palette.white);
+    noStroke();
+    circle(ORIGIN_X, ORIGIN_Y, 6);
+    
+    textSize(20);
+    textStyle(BOLD);
+    fill(palette.lightGray);
+    text("X", WIDTH - 30, ORIGIN_Y + 5);
+    text("T", ORIGIN_X - 25, 40);
+}
+
+function drawClocks() {
+    let clock_screen_x = ORIGIN_X + sim.clock_pos_x;
+    
+    // Moving Clocks
+    setGlow(palette.cyan, 15);
+    fill(0, 0, 0, 150);
+    stroke(palette.cyan);
+    strokeWeight(2);
+    rect(clock_screen_x, ORIGIN_Y - CLOCK_WIDTH / 2, sim.horizontal_length, CLOCK_WIDTH, 4); // Right
+    rect(clock_screen_x - CLOCK_WIDTH / 2, ORIGIN_Y - sim.vertical_length, CLOCK_WIDTH, sim.vertical_length, 4); // Top
+    
+    setGlow(palette.magenta, 15);
+    stroke(palette.magenta);
+    rect(clock_screen_x - sim.horizontal_length, ORIGIN_Y - CLOCK_WIDTH / 2, sim.horizontal_length, CLOCK_WIDTH, 4); // Left
+    clearGlow();
+
+    // Stationary Clocks
+    setGlow(palette.red, 15);
+    stroke(palette.red);
+    rect(STATIONARY_X, STATIONARY_Y - CLOCK_WIDTH / 2, INITIAL_CLOCK_LENGTH, CLOCK_WIDTH, 4); // Right
+    rect(STATIONARY_X - CLOCK_WIDTH / 2, STATIONARY_Y - INITIAL_CLOCK_LENGTH, CLOCK_WIDTH, INITIAL_CLOCK_LENGTH, 4); // Top
+    clearGlow();
+}
+
+function drawDigitalClocks() {
+    if (!sim.show_clocks) return;
+    
+    let clock_screen_x = ORIGIN_X + sim.clock_pos_x;
+    
+    textFont('Courier New');
+    textSize(22);
+    textStyle(BOLD);
+    noStroke();
+
+    // Right Clock (Yellow)
+    fill(palette.yellow);
+    setGlow(palette.yellow, 10);
+    text(sim.digital_right.get_display(), clock_screen_x + sim.horizontal_length + 20, ORIGIN_Y - 20);
+
+    // Left Clock (Magenta)
+    fill(palette.magenta);
+    setGlow(palette.magenta, 10);
+    text(sim.digital_left.get_display(), clock_screen_x - sim.horizontal_length - 60, ORIGIN_Y - 20);
+
+    // Top Clock (Green)
+    fill(palette.green);
+    setGlow(palette.green, 10);
+    text(sim.digital_top.get_display(), clock_screen_x + 15, ORIGIN_Y - sim.vertical_length - 30);
+    
+    clearGlow();
+    textFont('Segoe UI'); // reset
+}
+
+function drawPhotons() {
+    if (!sim.is_animating) return;
+
+    noFill();
+    
+    if (sim.show_trails) {
+        strokeWeight(2);
+        // Stationary
+        stroke(palette.red);
+        if (sim.st_h_trail.length > 1) { beginShape(); for (let pt of sim.st_h_trail) vertex(STATIONARY_X + pt.x, STATIONARY_Y + pt.y); endShape(); }
+        if (sim.st_v_trail.length > 1) { beginShape(); for (let pt of sim.st_v_trail) vertex(STATIONARY_X + pt.x, STATIONARY_Y - pt.y); endShape(); }
+        // Moving
+        stroke(palette.yellow);
+        if (sim.h_trail.length > 1) { beginShape(); for (let pt of sim.h_trail) vertex(ORIGIN_X + pt.x, ORIGIN_Y + pt.y); endShape(); }
+        stroke(palette.magenta);
+        if (sim.h2_trail.length > 1) { beginShape(); for (let pt of sim.h2_trail) vertex(ORIGIN_X + pt.x, ORIGIN_Y + pt.y); endShape(); }
+        stroke(palette.green);
+        if (sim.v_trail.length > 1) { beginShape(); for (let pt of sim.v_trail) vertex(ORIGIN_X + pt.x, ORIGIN_Y - pt.y); endShape(); }
+    }
+
+    // Draw Photons (Dots)
+    function drawGlowingPhoton(px, py, col) {
+        setGlow(col, 15); fill(col); noStroke(); circle(px, py, 12);
+        fill(palette.white); circle(px, py, 6); clearGlow();
+    }
+
+    if (sim.st_h_photon.active) drawGlowingPhoton(STATIONARY_X + sim.st_h_photon.x, STATIONARY_Y + sim.st_h_photon.y, palette.yellow);
+    if (sim.st_v_photon.active) drawGlowingPhoton(STATIONARY_X + sim.st_v_photon.x, STATIONARY_Y - sim.st_v_photon.y, palette.yellow);
+    if (sim.h_photon.active) drawGlowingPhoton(ORIGIN_X + sim.h_photon.x, ORIGIN_Y + sim.h_photon.y, palette.yellow);
+    if (sim.h2_photon.active) drawGlowingPhoton(ORIGIN_X + sim.h2_photon.x, ORIGIN_Y + sim.h2_photon.y, palette.magenta);
+    if (sim.v_photon.active) drawGlowingPhoton(ORIGIN_X + sim.v_photon.x, ORIGIN_Y - sim.v_photon.y, palette.yellow);
+}
+
+function drawUI() {
+    textAlign(RIGHT, TOP);
+    textSize(30);
+    textStyle(BOLD);
+    fill(palette.green);
+    text(`Speed: ${sim.speed_fraction.toFixed(2)}c`, WIDTH - 40, 30);
+
+    if (sim.is_animating) {
+        textSize(30);
+        fill(palette.red);
+        text(`Stationary (t): ${sim.st_time.toFixed(2)}`, WIDTH - 40, 60);
+        
+        fill(palette.cyan);
+        text(`Moving (t'): ${sim.moving_time.toFixed(2)}`, WIDTH - 40, 90);
+    }
+
+    let startX = WIDTH / 2 + 80;
+    let startY = HEIGHT / 2 + 10;
+    
+    textAlign(LEFT, TOP);
+    textSize(16);
+    textStyle(NORMAL);
+    
+    let lines = [];
+    if (!sim.is_animating) {
+        lines.push({t: "[↑↓] Arrows: Adjust speed", c: palette.yellow});
+        lines.push({t: "[P]lay animation", c: palette.yellow});
+        lines.push({t: "[R]eset", c: palette.yellow});
+    } else {
+        if (sim.is_frozen) {
+            lines.push({t: "Animation FROZEN - Press U to unfreeze", c: palette.red});
+            lines.push({t: "[F] Advance one frame", c: palette.red});
+        } else {
+            lines.push({t: "Running: [F] Freeze, [R] Reset", c: palette.yellow});
+            lines.push({t: "[F] Freeze, [U] Unfreeze", c: palette.white});
+        }
+    }
+    
+    lines.push({t: "", c: palette.white});
+    lines.push({t: `Moving clock length: ${sim.horizontal_length.toFixed(1)}px`, c: palette.cyan});
+    lines.push({t: `Original length: ${INITIAL_CLOCK_LENGTH}px`, c: palette.cyan});
+    
+    if (sim.is_animating) {
+        lines.push({t: `Moving clock pos: ${sim.clock_pos_x.toFixed(1)}`, c: palette.cyan});
+    }
+    
+    lines.push({t: `[T]rails: ${sim.show_trails ? 'ON' : 'OFF'}`, c: palette.green});
+    lines.push({t: `[C] Show/Hide digital clocks: ${sim.show_clocks ? 'ON' : 'OFF'}`, c: palette.cyan});
+    
+    lines.push({t: "", c: palette.yellow});
+    lines.push({t: "[C] toggles digital clocks at the mirror ends.", c: palette.yellow});
+    lines.push({t: "Each digital clock ticks precisely when its", c: palette.yellow});
+    lines.push({t: "photon hits the adjacent mirror.", c: palette.yellow});
+    lines.push({t: "Observe the Relativity of Simultaneity!", c: palette.yellow});
+
+    for (let i = 0; i < lines.length; i++) {
+        fill(lines[i].c);
+        text(lines[i].t, startX, startY + i * 22);
+    }
+}
+
+// --- Main Loop ---
+function draw() {
+    background(palette.bg);
+    
+    sim.handle_continuous_input();
+    
+    if (!sim.is_frozen || sim.step_frame_requested) {
+        sim.update(1.0 / FPS);
+        sim.step_frame_requested = false;
+    }
+
+    drawTimingCircles();
+    drawAxes();
+    drawClocks();
+    drawDigitalClocks();
+    drawPhotons();
+    drawUI();
+}
+
+// --- Input Handling ---
+function keyPressed() {
+    if (key.toLowerCase() === 'p' && !sim.is_animating) {
+        sim.start_animation();
+    } else if (key.toLowerCase() === 'r') {
+        sim.reset();
+    } else if (key.toLowerCase() === 'f' && sim.is_animating) {
+        if (sim.is_frozen) {
+            sim.single_step();
+        } else {
+            sim.is_frozen = true;
+        }
+    } else if (key.toLowerCase() === 'u' && sim.is_animating) {
+        sim.is_frozen = false;
+        sim.step_frame_requested = false;
+    } else if (key.toLowerCase() === 't') {
+        sim.show_trails = !sim.show_trails;
+        if (!sim.show_trails) {
+            sim.h_trail = []; sim.h2_trail = []; sim.v_trail = [];
+            sim.st_h_trail = []; sim.st_v_trail = [];
+        }
+    } else if (key.toLowerCase() === 'c') {
+        sim.show_clocks = !sim.show_clocks;
+    }
+}
+</script>
+</body>
+</html>

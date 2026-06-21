@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Einstein's Simultaneity Experiment</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #050510;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+            color: white;
+            user-select: none;
+        }
+        canvas {
+            box-shadow: 0 0 50px rgba(0, 0, 0, 1);
+            border-radius: 8px;
+        }
+    </style>
+</head>
+<body>
+<script>
+// --- Constants & Globals ---
+const WIDTH = 1000;
+const HEIGHT = 600;
+
+// Colors matching original Python, upgraded for p5 glow
+let colorSky, colorGround, colorWhite, colorYellow, colorRed, colorGreen, colorBlue, colorGray;
+
+// Slowed simulation by 50%
+const LIGHT_SPEED = 5000.0 * 0.5; // px/s scaled for visualization
+
+// Observer parameters
+const OBSERVER_NAMES = ["A", "0", "B"];
+const OBSERVER_Y_OFFSET = -40; // Ground height - 40px
+
+// Modes
+const MODE_2_OBSERVERS = 0;
+const MODE_3_OBSERVERS = 1;
+let currentMode = MODE_2_OBSERVERS;
+
+// Simulation State
+let stars = [];
+let observerPositions = [];
+let observerColors = [];
+let observerTimes = [0, 0, 0];
+let timeOffsets = [0, 0, 0];
+let clockHistory = [[], [], []];
+let lightPulses = [];
+let pairSynchronization = {};
+let selectedObserver = 0;
+let gameTime = 0;
+let showAnswer = false;
+
+let labelFont, titleFont;
+
+function setup() {
+    createCanvas(WIDTH, HEIGHT);
+    
+    // DefineColors
+    colorSky = color(10, 10, 30);
+    colorGround = color(60, 60, 65);
+    colorWhite = color(255);
+    colorYellow = color(255, 255, 100);
+    colorRed = color(255, 80, 80);
+    colorGreen = color(80, 255, 80);
+    colorBlue = color(80, 150, 255);
+    colorGray = color(150);
+
+    // Create stars
+    for (let i = 0; i < 100; i++) {
+        stars.push({
+            x: random(WIDTH),
+            y: random(HEIGHT * 3 / 4), // Only in the sky
+            brightness: random(100, 255),
+            twinkle: random(TWO_PI)
+        });
+    }
+
+    textFont('Arial');
+    setupSimulation();
+}
+
+function setupSimulation() {
+    let groundY = HEIGHT * 3 / 4;
+    let observerY = groundY - 30;
+
+    // Clear history
+    clockHistory = [[], [], []];
+    lightPulses = [];
+    gameTime = 0;
+    observerTimes = [0, 0, 0];
+    timeOffsets = [0, 0, 0];
+
+    if (currentMode === MODE_2_OBSERVERS) {
+        let observerSpacing = WIDTH / 3;
+        observerPositions = [
+            createVector(observerSpacing, observerY),       // Observer A
+            createVector(WIDTH - observerSpacing, observerY) // Observer B
+        ];
+        // p5 specific observer names handled dynamically below in drawing
+        observerColors = [colorRed, colorBlue];
+        clockHistory = [[], []];
+        pairSynchronization = {"A-B": null};
+        selectedObserver = selectedObserver % 2; // ensure valid index if swapping
+    } else {
+        let observerSpacing = WIDTH / 4;
+        observerPositions = [
+            createVector(observerSpacing, observerY), // Observer A
+            createVector(WIDTH / 2, observerY),        // Observer 0
+            createVector(WIDTH - observerSpacing, observerY) // Observer B
+        ];
+        observerColors = [colorRed, colorGreen, colorBlue];
+        clockHistory = [[], [], []];
+        
+        // Mode 3: one randomly unsynchronized observer (tends to make sync harder)
+        let unsynchronizedObserver = floor(random(0, 3));
+        timeOffsets[unsynchronizedObserver] = random(0.05, 0.2); // Random offset in seconds
+
+        pairSynchronization = {
+            "A-B": null, "A-0": null, "0-B": null
+        };
+    }
+}
+
+// --- Native Glow Helper ---
+function setGlow(clr, blurSize) {
+    drawingContext.shadowBlur = blurSize;
+    drawingContext.shadowColor = clr.toString();
+}
+
+function clearGlow() {
+    drawingContext.shadowBlur = 0;
+}
+
+// --- LightPulse Class ---
+class LightPulse {
+    constructor(originIdx, startTime) {
+        this.origin = observerPositions[originIdx].copy();
+        this.originIdx = originIdx;
+        this.startTime = startTime;
+        this.radius = 0;
+        this.active = true;
+        this.arrivalTimes = Array(observerPositions.length).fill(-1);
+        this.arrivalTimes[originIdx] = startTime;
+        
+        // Record emission time
+        clockHistory[originIdx].push((startTime + timeOffsets[originIdx]) % 100);
+    }
+
+    update(dt) {
+        if (!this.active) return;
+        
+        this.radius += LIGHT_SPEED * dt;
+        
+        for (let i = 0; i < observerPositions.length; i++) {
+            // Check for arrival at other observers
+            if (i !== this.originIdx && this.arrivalTimes[i] === -1) {
+                let distance = p5.Vector.dist(observerPositions[i], this.origin);
+                
+                if (this.radius >= distance) {
+                    let travelTime = distance / LIGHT_SPEED;
+                    this.arrivalTimes[i] = this.startTime + travelTime;
+                    
+                    // Record arrival time in other observer's local clock history
+                    clockHistory[i].push((this.arrivalTimes[i] + timeOffsets[i]) % 100);
+                }
+            }
+        }
+        
+        // Deactivate when off-screen
+        if (this.radius > WIDTH * 1.5) {
+            this.active = false;
+        }
+    }
+
+    draw() {
+        if (!this.active) return;
+        noFill();
+        strokeWeight(2);
+        
+        // Glowing Neon effect
+        setGlow(colorYellow, 15);
+        stroke(colorYellow);
+        ellipse(this.origin.x, this.origin.y, this.radius * 2);
+        
+        // Internal pulse line for structure
+        stroke(255);
+        strokeWeight(1);
+        ellipse(this.origin.x, this.origin.y, this.radius * 2 - 4);
+        clearGlow();
+    }
+}
+
+// --- Draw Helpers ---
+function drawObserverFigure(p, colorFigure, localName, timeValue) {
+    let x = p.x;
+    let y = p.y;
+    let isSelected = (p.x === observerPositions[selectedObserver].x);
+
+    push();
+    if (isSelected) setGlow(colorFigure, 20);
+    
+    // Upgrade stick figure to an avatar circle with specific lab color
+    fill(colorFigure);
+    noStroke();
+    rectMode(CENTER);
+    rect(x, y - 10, 40, 50, 5); // Body
+    circle(x, y - 45, 25); // Head
+    
+    fill(colorSky);
+    rect(x, y - 10, 30, 40, 3); // Gown interior
+    
+    fill(255);
+    rect(x, y - 20, 25, 6, 2); // Lab ID badge visual
+
+    pop();
+    clearGlow();
+
+    // Clock Label
+    textAlign(CENTER, BOTTOM);
+    textSize(18);
+    textStyle(BOLD);
+    fill(colorWhite);
+    let labelLower = localName === "0" ? "₀" : localName.toLowerCase();
+    text("Observer " + localName, x, y + 25);
+
+    // Current time
+    textStyle(NORMAL);
+    textSize(18);
+    let timeFormatted = (timeValue % 100).toFixed(1);
+    text(`t${labelLower}: ${timeFormatted}`, x, y - 75);
+
+    // Selected indicator
+    if (isSelected) {
+        fill(colorYellow);
+        textSize(16);
+        text("SELECTED", x, y + 45);
+    }
+
+    // Flash History Records
+    textAlign(LEFT, TOP);
+    textSize(16);
+    let currentIdx = observerPositions.indexOf(p);
+    let records = clockHistory[currentIdx];
+    for (let i = 0; i < records.length; i++) {
+        let alpha = map(i, 0, records.length, 255, 100);
+        fill(255, 255, 100, alpha); // Neon yellow history
+        text(records[i].toFixed(1), x + 25, y - 60 + i * 20);
+    }
+}
+
+function drawSynchronizationResults() {
+    let resultsX0 = 50;
+    let resultsY0 = 60;
+    let colWidth = currentMode === MODE_2_OBSERVERS ? WIDTH - 100 : WIDTH / 3 - 50;
+
+    // Mapping Python pair names to p5 results layout
+    let resultPairs = [];
+    if (currentMode === MODE_2_OBSERVERS) {
+        resultPairs = [{ name: "A-B", x: WIDTH / 2 }];
+    } else {
+        resultPairs = [
+            { name: "A-0", x: observerPositions[0].x },
+            { name: "0-B", x: observerPositions[1].x },
+            { name: "A-B", x: observerPositions[2].x }
+        ];
+    }
+
+    for (let pData of resultPairs) {
+        let pairName = pData.name;
+        let pos_x = pData.x;
+        let result = pairSynchronization[pairName];
+
+        if (result) {
+            let leftLabel = pairName.split('-')[0];
+            let rightLabel = pairName.split('-')[1];
+            let labelSuffixL = leftLabel.toLowerCase();
+            let labelSuffixR = rightLabel.toLowerCase();
+            if(leftLabel === "0") labelSuffixL = "₀";
+            if(rightLabel === "0") labelSuffixR = "₀";
+
+            textAlign(CENTER, TOP);
+            textSize(18);
+            textStyle(BOLD);
+            fill(colorWhite);
+            text(`Synchronization ${pairName}`, pos_x, resultsY0);
+
+            // Sync Status
+            let syncColor = result.synchronized ? colorGreen : colorRed;
+            let syncText = result.synchronized ? "SYNCHRONIZED" : "NOT SYNCHRONIZED";
+            fill(syncColor);
+            setGlow(syncColor, 15);
+            text(syncText, pos_x, resultsY0 + 25);
+            clearGlow();
+
+            // Einstein's Criterion Formula
+            textStyle(NORMAL);
+            textSize(16);
+            fill(colorWhite);
+            let formulaText = `Einstein's criterion: T${labelSuffixR}' - T${labelSuffixL} = T${labelSuffixL}'' - T${labelSuffixR}'`;
+            text(formulaText, pos_x, resultsY0 + 55);
+
+            // Detailed Measurements
+            textSize(14);
+            textAlign(CENTER, TOP);
+            let measurements = [
+                `Emission (L): T${labelSuffixL} = ${result.t_left.toFixed(1)}`,
+                `Arrival (R): T${labelSuffixR}' = ${result.t_right_prime.toFixed(1)}`,
+                `Forward Δt: T${labelSuffixR}' - T${labelSuffixL} = ${result.time_diff_left_to_right.toFixed(1)}`,
+                "",
+                `Emission (R): T${labelSuffixR}' = ${result.t_right.toFixed(1)}`,
+                `Arrival (L): T${labelSuffixL}'' = ${result.t_left_prime.toFixed(1)}`,
+                `Backward Δt: T${labelSuffixL}'' - T${labelSuffixR}' = ${result.time_diff_right_to_left.toFixed(1)}`,
+                "",
+                `Δt Diff: |${result.time_diff_left_to_right.toFixed(1)} - ${result.time_diff_right_to_left.toFixed(1)}| = ${abs(result.time_diff_left_to_right - result.time_diff_right_to_left).toFixed(3)}s`
+            ];
+            
+            for (let i = 0; i < measurements.length; i++) {
+                text(measurements[i], pos_x, resultsY0 + 85 + i * 20);
+            }
+        }
+    }
+}
+
+function drawQuestionHud() {
+    textAlign(CENTER, TOP);
+    textSize(24);
+    fill(colorYellow);
+    textStyle(BOLD);
+
+    if (currentMode === MODE_2_OBSERVERS) {
+        text("Are clocks A and B synchronized?", WIDTH / 2, 60);
+    } else {
+        observerNamesTemp = ["A", "0", "B"];
+        observerXTemp = observerPositions.map(p => p.x);
+        text("Synchronized?", observerXTemp[0], 60); // A-0 over A
+        text("Synchronized?", observerXTemp[1], 60); // 0-B over 0
+        text("Synchronized?", observerXTemp[2], 60); // A-B over B
+    }
+    textStyle(NORMAL);
+}
+
+// --- Logic Update Function ---
+function updateSynchronizationLogic() {
+    let pairs = [];
+    if (currentMode === MODE_2_OBSERVERS) {
+        pairs = [[0, 1, "A-B"]];
+    } else {
+        pairs = [
+            [0, 1, "A-0"],
+            [1, 2, "0-B"],
+            [0, 2, "A-B"]
+        ];
+    }
+
+    for (let pData of pairs) {
+        let leftIdx = pData[0];
+        let rightIdx = pData[1];
+        let pairName = pData[2];
+
+        // Einstein defined synchronization: 
+        // Clock R is sync'd to Clock L if a signal emitted from L at T_L arrives at R at T_R',
+        // and a signal immediately reflected back from R at T_R' arrives at L at T_L'', 
+        // and T_R' - T_L == T_L'' - T_R'
+
+        // Wait for latest signal from L->R
+        let pulse_L_to_R = null;
+        for (let p of lightPulses) {
+            if (p.originIdx === leftIdx && p.arrivalTimes[rightIdx] !== -1) {
+                if (!pulse_L_to_R || p.startTime > pulse_L_to_R.startTime) {
+                    pulse_L_to_R = p;
+                }
+            }
+        }
+
+        // Wait for latest signal from R->L
+        let pulse_R_to_L = null;
+        for (let p of lightPulses) {
+            if (p.originIdx === rightIdx && p.arrivalTimes[leftIdx] !== -1) {
+                if (!pulse_R_to_L || p.startTime > pulse_R_to_L.startTime) {
+                    pulse_R_to_L = p;
+                }
+            }
+        }
+
+        // If both pulses exist, calculate synchronization
+        if (pulse_L_to_R && pulse_R_to_L) {
+            // Apply current time + offsets % 100 for clock logic
+            let t_left = (pulse_L_to_R.startTime + timeOffsets[leftIdx]) % 100;
+            let t_right_prime = (pulse_L_to_R.arrivalTimes[rightIdx] + timeOffsets[rightIdx]) % 100;
+            
+            let t_right = (pulse_R_to_L.startTime + timeOffsets[rightIdx]) % 100;
+            let t_left_prime = (pulse_R_to_L.arrivalTimes[leftIdx] + timeOffsets[leftIdx]) % 100;
+
+            // Einstein defined synchronization (Forward Δt vs Backward Δt)
+            let timeDiffFwd = t_right_prime - t_left;
+            let timeDiffBwd = t_left_prime - t_right;
+
+            // Handle %100 rollover logic (wrap time diffs back into 0-100 range)
+            if (timeDiffFwd < 0) timeDiffFwd += 100;
+            if (timeDiffBwd < 0) timeDiffBwd += 100;
+
+            // Allow very small rounding difference for JS float math
+            let isSynchronized = abs(timeDiffFwd - timeDiffBwd) < 0.05;
+
+            pairSynchronization[pairName] = {
+                synchronized: isSynchronized,
+                t_left: t_left,
+                t_right_prime: t_right_prime,
+                time_diff_left_to_right: timeDiffFwd,
+                t_right: t_right,
+                t_left_prime: t_left_prime,
+                time_diff_right_to_left: timeDiffBwd
+            };
+        }
+    }
+}
+
+// --- p5 Draw Loop ---
+function draw() {
+    let dt = deltaTime / 1000.0;
+    gameTime += dt;
+
+    // Update current observer clock times
+    for (let i = 0; i < observerTimes.length; i++) {
+        observerTimes[i] = (gameTime + timeOffsets[i]) % 100;
+    }
+
+    // Update Light Pulses
+    for (let pulse of lightPulses) {
+        pulse.update(dt);
+    }
+
+    updateSynchronizationLogic();
+
+    // Background Rendering
+    background(colorSky);
+    for (let star of stars) {
+        let tw = sin(frameCount * 0.05 + star.twinkle) * 100;
+        fill(star.brightness, star.brightness, star.brightness, 255 + tw);
+        noStroke();
+        ellipse(star.x, star.y, 1);
+    }
+
+    let groundY = HEIGHT * 3 / 4;
+    fill(colorGround);
+    noStroke();
+    rectMode(CORNER);
+    rect(0, groundY, WIDTH, HEIGHT - groundY);
+
+    // Light Pulses (Rendered over background, under figures)
+    for (let pulse of lightPulses) {
+        pulse.draw();
+    }
+
+    // Question or Formulae
+    if (showAnswer) {
+        drawSynchronizationResults();
+    } else {
+        drawQuestionHud();
+    }
+
+    // Observers Rendering
+    observerNames = currentMode === MODE_2_OBSERVERS ? ["A", "B"] : ["A", "0", "B"];
+    for (let i = 0; i < observerPositions.length; i++) {
+        drawObserverFigure(
+            observerPositions[i], 
+            observerColors[i], 
+            observerNames[i], 
+            observerTimes[i]
+        );
+    }
+
+    // HUD Text (Lower Left)
+    textAlign(LEFT, BOTTOM);
+    textSize(16);
+    fill(colorWhite);
+    textStyle(BOLD);
+    text(`Mode: ${currentMode === MODE_2_OBSERVERS ? "2 observers" : "3 observers"} (v=c/2)`, 15, HEIGHT - 50);
+    
+    fill(colorYellow);
+    text("SELECTED OBSERVER: " + observerNames[selectedObserver], observerPositions[selectedObserver].x - 50, HEIGHT - 85);
+    
+    fill(200);
+    textStyle(NORMAL);
+    text("Left/Right arrows select, Space emits light, [C]lear, [M]ode, [A]nswer", 15, HEIGHT - 30);
+
+    // Title
+    textAlign(CENTER, TOP);
+    textSize(24);
+    fill(colorWhite);
+    textStyle(BOLD);
+    text("Einstein's Simultaneity Experiment Lab", WIDTH / 2, 15);
+    textStyle(NORMAL);
+}
+
+// --- p5 Input Functions ---
+function keyPressed() {
+    if (keyCode === LEFT_ARROW) {
+        selectedObserver = (selectedObserver - 1) % observerPositions.length;
+        if (selectedObserver < 0) selectedObserver = observerPositions.length - 1;
+    } else if (keyCode === RIGHT_ARROW) {
+        selectedObserver = (selectedObserver + 1) % observerPositions.length;
+    } else if (key === ' ') {
+        let newPulse = new LightPulse(selectedObserver, gameTime);
+        lightPulses.push(newPulse);
+        resetPairSyncStates();
+    } else if (key.toLowerCase() === 'c') {
+        for (let i = 0; i < clockHistory.length; i++) {
+            clockHistory[i] = [];
+        }
+        lightPulses = [];
+        resetPairSyncStates();
+    } else if (key.toLowerCase() === 'm') {
+        currentMode = currentMode === MODE_2_OBSERVERS ? MODE_3_OBSERVERS : MODE_2_OBSERVERS;
+        showAnswer = false; // reset answer display
+        setupSimulation();
+    } else if (key.toLowerCase() === 'a') {
+        showAnswer = !showAnswer;
+    }
+}
+
+function resetPairSyncStates() {
+    if (currentMode === MODE_2_OBSERVERS) {
+        pairSynchronization = {"A-B": null};
+    } else {
+        pairSynchronization = {"A-B": null, "A-0": null, "0-B": null};
+    }
+}
+
+</script>
+</body>
+</html>

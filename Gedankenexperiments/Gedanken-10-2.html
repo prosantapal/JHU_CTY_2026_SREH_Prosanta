@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Maxwell's Equations - Magnetic Field Visualization</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #050508;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+            color: white;
+            user-select: none;
+        }
+        canvas {
+            box-shadow: 0 0 50px rgba(0, 0, 0, 1);
+            border-radius: 8px;
+        }
+    </style>
+</head>
+<body>
+<script>
+// --- Constants & Globals ---
+const WIDTH = 900;
+const HEIGHT = 700;
+
+let palette;
+
+// Scaling and rotation parameters (from original code)
+const scale_factor = 0.6; // Slightly enlarged for web visibility
+const rotation_angle = 90; // degrees clockwise
+
+// Original magnet properties
+const orig_magnet_width = 100;
+const orig_magnet_height = 200;
+
+// Scaled dimensions
+const magnet_width = orig_magnet_width * scale_factor;
+const magnet_height = orig_magnet_height * scale_factor;
+
+// Oval properties
+const base_oval_width = (orig_magnet_width + 100) * scale_factor;
+const base_oval_height = (orig_magnet_height + 400) * scale_factor;
+const base_offset = 100 * scale_factor;
+
+// All possible oval sizes (concentric)
+const all_oval_sizes = [
+    [0.5, 0.5], [0.6, 0.6], [0.7, 0.7], [0.8, 0.8], [1.0, 1.0],
+    [1.2, 1.2], [1.5, 1.5], [1.8, 1.8], [2.1, 2.1], [2.5, 2.5], [3.0, 3.0]
+];
+
+// Current visible oval sizes
+let current_size_index = 7; // Start with 7 lines
+
+// Array to store calculated line points for Gauss calculation
+let calculated_lines = [];
+
+// Gaussian Surface parameters
+let surface = {
+    x: 250,
+    y: 200,
+    r: 75,
+    dragging: false
+};
+
+function setup() {
+    createCanvas(WIDTH, HEIGHT);
+    angleMode(DEGREES);
+    
+    palette = {
+        bg: color(10, 12, 18),
+        north: color(255, 50, 60),    // Neon Red
+        south: color(50, 120, 255),   // Neon Blue
+        fieldBase: color(30, 80, 150, 80), // Faint blue background line
+        fieldFlow: color(0, 200, 255),     // Glowing cyan flowing line
+        surfaceBorder: color(0, 255, 150), // Neon Green
+        surfaceFill: color(0, 255, 150, 25), 
+        white: color(255),
+        hudBg: color(15, 20, 25, 220)
+    };
+
+    calculateFieldPaths();
+}
+
+// --- Original Math Logic ---
+function rotate_point(x, y, cx, cy, angle) {
+    let rad = angle; 
+    let dx = x - cx;
+    let dy = y - cy;
+    let new_x = cx + dx * cos(rad) - dy * sin(rad);
+    let new_y = cy + dx * sin(rad) + dy * cos(rad);
+    return { x: new_x, y: new_y };
+}
+
+function calculateFieldPaths() {
+    calculated_lines = [];
+    let cx = WIDTH / 2;
+    let cy = HEIGHT / 2;
+    
+    let oval_subset = all_oval_sizes.slice(0, current_size_index);
+    
+    for (let size of oval_subset) {
+        let width_scale = size[0];
+        let height_scale = size[1];
+        
+        let oval_w = base_oval_width * width_scale;
+        let oval_h = base_oval_height * height_scale;
+        let offset = base_offset * width_scale;
+        
+        // Right oval
+        let right_points = [];
+        // Using step of 2 degrees instead of 5 for smoother intersection detection
+        for (let angle = 0; angle < 360; angle += 2) { 
+            let x = cx + offset + (oval_w / 2) * cos(angle);
+            let y = cy + (oval_h / 2) * sin(angle);
+            right_points.push(rotate_point(x, y, cx, cy, rotation_angle));
+        }
+        
+        // Left oval
+        let left_points = [];
+        for (let angle = 0; angle < 360; angle += 2) {
+            let x = cx - offset + (oval_w / 2) * cos(angle);
+            let y = cy + (oval_h / 2) * sin(angle);
+            left_points.push(rotate_point(x, y, cx, cy, rotation_angle));
+        }
+        
+        calculated_lines.push({ points: right_points, scale: width_scale });
+        calculated_lines.push({ points: left_points, scale: width_scale });
+    }
+}
+
+// --- Native Glow Helper ---
+function setGlow(clr, blurSize) {
+    drawingContext.shadowBlur = blurSize;
+    drawingContext.shadowColor = clr.toString();
+}
+
+function clearGlow() {
+    drawingContext.shadowBlur = 0;
+}
+
+// --- Main Draw Loop ---
+function draw() {
+    // Handle surface dragging
+    if (surface.dragging) {
+        surface.x = mouseX;
+        surface.y = mouseY;
+    }
+
+    background(palette.bg);
+    
+    drawFieldLines();
+    drawMagnet();
+    drawGaussianSurface();
+    drawUI();
+}
+
+function drawMagnet() {
+    let cx = WIDTH / 2;
+    let cy = HEIGHT / 2;
+    let half_w = magnet_width / 2;
+    let half_h = magnet_height / 2;
+
+    push();
+    translate(cx, cy);
+    rotate(rotation_angle); // Apply original 90-degree rotation
+
+    // Magnet Shadow/Glow
+    setGlow(color(255, 255, 255, 50), 30);
+
+    // North Pole (Top half BEFORE rotation -> becomes Right half AFTER rotation)
+    fill(palette.north);
+    noStroke();
+    rect(-half_w, -half_h, magnet_width, half_h, 6, 6, 0, 0);
+
+    // South Pole (Bottom half BEFORE rotation -> becomes Left half AFTER rotation)
+    fill(palette.south);
+    rect(-half_w, 0, magnet_width, half_h, 0, 0, 6, 6);
+
+    clearGlow();
+
+    // Center divider
+    stroke(255, 255, 255, 100);
+    strokeWeight(2);
+    line(-half_w, 0, half_w, 0);
+    pop();
+
+    // Labels: Drawn OUTSIDE the push/pop so they stay upright!
+    fill(palette.white);
+    noStroke();
+    textSize(24 * scale_factor * 1.5);
+    textStyle(BOLD);
+    textAlign(CENTER, CENTER);
+
+    // Calculate the exactly rotated coordinates for the text
+    let n_pos = rotate_point(cx, cy - half_h + 30 * scale_factor, cx, cy, rotation_angle);
+    let s_pos = rotate_point(cx, cy + half_h - 30 * scale_factor, cx, cy, rotation_angle);
+    
+    text("N", n_pos.x, n_pos.y);
+    text("S", s_pos.x, s_pos.y);
+}
+
+function drawFieldLines() {
+    for (let lineData of calculated_lines) {
+        let pts = lineData.points;
+        let line_width = max(1, 2 * scale_factor * (1 / lineData.scale));
+
+        // 1. Draw static faint background line
+        noFill();
+        stroke(palette.fieldBase);
+        strokeWeight(line_width * 1.5);
+        beginShape();
+        for (let p of pts) vertex(p.x, p.y);
+        endShape(CLOSE);
+
+        // 2. Draw dynamic flowing dashed line
+        stroke(palette.fieldFlow);
+        setGlow(palette.fieldFlow, 15);
+        
+        drawingContext.setLineDash([15, 25]);
+        // Animate the flow
+        drawingContext.lineDashOffset = frameCount * 2; 
+
+        beginShape();
+        for (let p of pts) vertex(p.x, p.y);
+        endShape(CLOSE);
+        
+        // Reset dashed lines and glow
+        drawingContext.setLineDash([]);
+        clearGlow();
+    }
+}
+
+function drawGaussianSurface() {
+    let entering = 0;
+    let exiting = 0;
+
+    // Calculate intersections across all calculated paths
+    for (let lineData of calculated_lines) {
+        let pts = lineData.points;
+        for (let i = 0; i < pts.length; i++) {
+            let p1 = pts[i];
+            let p2 = pts[(i + 1) % pts.length]; // Wrap to start
+
+            let d1 = dist(p1.x, p1.y, surface.x, surface.y);
+            let d2 = dist(p2.x, p2.y, surface.x, surface.y);
+
+            let in1 = d1 <= surface.r;
+            let in2 = d2 <= surface.r;
+
+            // If it crosses the boundary
+            if (!in1 && in2) entering++;
+            if (in1 && !in2) exiting++;
+        }
+    }
+
+    let netFlux = exiting - entering; // Maxwell's 2nd Law states this is always 0
+
+    // Draw the Translucent Surface
+    push();
+    translate(surface.x, surface.y);
+    
+    fill(palette.surfaceFill);
+    stroke(palette.surfaceBorder);
+    strokeWeight(2);
+    setGlow(palette.surfaceBorder, 15);
+    drawingContext.setLineDash([8, 8]);
+    circle(0, 0, surface.r * 2);
+    drawingContext.setLineDash([]);
+    clearGlow();
+
+    // Draw Floating Data HUD attached to the surface
+    fill(10, 15, 20, 230);
+    noStroke();
+    rectMode(CENTER);
+    rect(0, surface.r + 45, 140, 65, 8);
+
+    fill(palette.white);
+    textAlign(CENTER, CENTER);
+    textSize(13);
+    textStyle(NORMAL);
+    
+    text(`Lines In: ${entering}`, 0, surface.r + 25);
+    text(`Lines Out: ${exiting}`, 0, surface.r + 45);
+    
+    fill(palette.surfaceBorder);
+    textStyle(BOLD);
+    text(`Net Flux (Φ): ${netFlux}`, 0, surface.r + 65);
+    
+    pop();
+}
+
+function drawUI() {
+    // Top HUD
+    fill(palette.hudBg);
+    stroke(50, 60, 70);
+    strokeWeight(1);
+    rectMode(CORNER);
+    rect(20, 20, 380, 120, 8);
+
+    fill(palette.white);
+    noStroke();
+    textAlign(LEFT, TOP);
+    textSize(18);
+    textStyle(BOLD);
+    text("MAXWELL'S SECOND Equation", 35, 35);
+    
+    textSize(13);
+    textStyle(NORMAL);
+    fill(180, 200, 220);
+    text("∇·B = 0 (No Magnetic Monopoles)", 35, 60);
+    text("Drag the Green Gaussian Surface to measure.", 35, 85);
+    text(`Field Density: ${current_size_index} (Use UP/DOWN Arrows)`, 35, 105);
+
+    // Instructions at bottom
+    textAlign(CENTER, BOTTOM);
+    fill(100, 120, 150);
+    text("Observe: No matter where you move the surface, Net Flux is ALWAYS zero.", WIDTH / 2, HEIGHT - 15);
+}
+
+// --- Interactions ---
+function mousePressed() {
+    let d = dist(mouseX, mouseY, surface.x, surface.y);
+    if (d < surface.r + 15) { // Slightly larger grab radius for ease of use
+        surface.dragging = true;
+    }
+}
+
+function mouseReleased() {
+    surface.dragging = false;
+}
+
+function keyPressed() {
+    if (keyCode === UP_ARROW) {
+        if (current_size_index < all_oval_sizes.length) {
+            current_size_index++;
+            calculateFieldPaths(); // Recalculate based on new size
+        }
+        return false; // Prevent page scroll
+    } else if (keyCode === DOWN_ARROW) {
+        if (current_size_index > 1) {
+            current_size_index--;
+            calculateFieldPaths(); // Recalculate based on new size
+        }
+        return false; // Prevent page scroll
+    }
+}
+</script>
+</body>
+</html>

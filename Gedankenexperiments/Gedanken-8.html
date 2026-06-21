@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Spacetime Diagram</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #030305;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: white;
+            overflow: hidden;
+        }
+        canvas {
+            box-shadow: 0 0 50px rgba(0, 0, 0, 1);
+            border-radius: 8px;
+        }
+    </style>
+</head>
+<body>
+<script>
+// --- Constants & Globals ---
+const WIDTH = 1000;
+const HEIGHT = 700;
+
+// Spacetime Coordinates
+const AXIS_LENGTH = 350;
+const SCALE = 80;
+const MAX_TRAIL = 100;
+const PROJ_Y = 620; // Y position for the 1D Space Projection
+
+// App State
+let isPlaying = false;
+let showSpacetime = true;
+let showAdditional = false;
+let showStationary = false;
+
+// Physics & Objects
+const OBJ_TYPES = ["car", "rocket", "humanoid"];
+let objIdx = 0;
+
+let currentSpeed = 0.5;
+let rocketVel = 0;
+const rocketAcc = 0.028;
+let humanoidDir = 1;
+let humanoidTimer = 0;
+
+// Entities
+let mainObj;
+let statObj;
+let gridObjs = [];
+let palette;
+
+function setup() {
+    createCanvas(WIDTH, HEIGHT);
+    
+    palette = {
+        bg: color(5, 5, 12),
+        grid: color(30, 30, 45),
+        axis: color(150, 150, 180),
+        car: color(0, 255, 150),
+        rocket: color(255, 150, 50),
+        humanoid: color(255, 100, 200),
+        stat: color(100, 200, 255),
+        parallel: color(50, 200, 100, 150),
+        glass: color(20, 25, 35, 220)
+    };
+
+    resetSimulation();
+}
+
+function resetSimulation() {
+    isPlaying = false;
+    rocketVel = 0;
+    humanoidDir = random([-1, 1]);
+    humanoidTimer = 0;
+
+    mainObj = { lx: 0, ly: 0, trail: [] };
+    statObj = { lx: 0, ly: 0, trail: [] };
+    
+    gridObjs = [];
+    for (let i = -4; i <= 4; i++) {
+        if (i === 0) continue;
+        gridObjs.push({ lx: i * SCALE, ly: 0, offset: i, trail: [] });
+    }
+}
+
+// --- Coordinate Mapping ---
+// Maps logical X to Screen X
+function toScreenX(lx) {
+    return WIDTH / 2 + lx;
+}
+// Maps logical Y (Time) to Screen Y (Moving UP)
+function toScreenY(ly) {
+    return HEIGHT / 2 + 100 - ly;
+}
+
+function setGlow(clr, blurSize) {
+    drawingContext.shadowBlur = blurSize;
+    drawingContext.shadowColor = clr.toString();
+}
+
+function clearGlow() {
+    drawingContext.shadowBlur = 0;
+}
+
+// --- Main Draw Loop ---
+function draw() {
+    background(palette.bg);
+
+    // 1. Physics Update
+    if (isPlaying) {
+        let newY = mainObj.ly + 3; // Time ticks forward
+
+        // Main Object Motion
+        let type = OBJ_TYPES[objIdx];
+        if (type === "car") {
+            mainObj.lx += currentSpeed * 3;
+        } else if (type === "rocket") {
+            rocketVel += rocketAcc;
+            mainObj.lx += rocketVel * 3;
+        } else if (type === "humanoid") {
+            humanoidTimer++;
+            if (humanoidTimer > random(10, 25)) {
+                humanoidDir *= -1;
+                humanoidTimer = 0;
+            }
+            mainObj.lx += humanoidDir * random(1, 3);
+        }
+        mainObj.ly = newY;
+        
+        // Save Trail
+        mainObj.trail.push({x: mainObj.lx, y: mainObj.ly});
+        if (mainObj.trail.length > MAX_TRAIL) mainObj.trail.shift();
+
+        // Stationary Object
+        if (showStationary) {
+            statObj.ly = newY;
+            statObj.trail.push({x: statObj.lx, y: statObj.ly});
+            if (statObj.trail.length > MAX_TRAIL) statObj.trail.shift();
+        }
+
+        // Additional Grid Objects
+        if (showAdditional) {
+            gridObjs.forEach(go => {
+                go.lx += currentSpeed * 3;
+                go.ly = newY;
+                go.trail.push({x: go.lx, y: go.ly});
+                if (go.trail.length > MAX_TRAIL) go.trail.shift();
+            });
+        }
+
+        // Auto-pause if it leaves the bounds
+        if (mainObj.ly > AXIS_LENGTH + 80 || abs(mainObj.lx) > AXIS_LENGTH + 80) {
+            isPlaying = false;
+        }
+    }
+
+    // 2. Render Spacetime Diagram (2D Graph)
+    if (showSpacetime) {
+        drawSpacetimeGrid();
+        drawSpacetimeAxes();
+
+        blendMode(ADD);
+        if (showAdditional) gridObjs.forEach(go => drawTrail(go.trail, palette.parallel));
+        if (showStationary) drawTrail(statObj.trail, palette.stat);
+        drawTrail(mainObj.trail, getObjColor());
+        blendMode(BLEND);
+
+        // Draw Objects on Graph
+        if (showAdditional) gridObjs.forEach(go => drawObject(toScreenX(go.lx), toScreenY(go.ly), "car", palette.parallel, 0.6));
+        if (showStationary) drawObject(toScreenX(statObj.lx), toScreenY(statObj.ly), "triangle", palette.stat, 0.8);
+        drawObject(toScreenX(mainObj.lx), toScreenY(mainObj.ly), OBJ_TYPES[objIdx], getObjColor(), 0.8, isPlaying);
+    }
+
+    // 3. Render 1D Space Projection (Bottom Track)
+    drawSpaceProjection();
+
+    // 4. Render UI
+    drawUI();
+}
+
+// --- Drawing Helpers ---
+function drawSpacetimeGrid() {
+    stroke(palette.grid);
+    strokeWeight(1);
+    
+    // Vertical lines (Space increments)
+    for (let x = -4; x <= 4; x++) {
+        if (x === 0) continue;
+        let sx = toScreenX(x * SCALE);
+        line(sx, toScreenY(-SCALE), sx, toScreenY(AXIS_LENGTH + 50));
+    }
+    // Horizontal lines (Time increments)
+    for (let y = -1; y <= 5; y++) {
+        if (y === 0) continue;
+        let sy = toScreenY(y * SCALE);
+        line(toScreenX(-AXIS_LENGTH - 50), sy, toScreenX(AXIS_LENGTH + 50), sy);
+    }
+}
+
+function drawSpacetimeAxes() {
+    stroke(palette.axis);
+    strokeWeight(2);
+    // X Axis (Space)
+    line(toScreenX(-AXIS_LENGTH - 50), toScreenY(0), toScreenX(AXIS_LENGTH + 50), toScreenY(0));
+    // Y Axis (Time)
+    line(toScreenX(0), toScreenY(-SCALE), toScreenX(0), toScreenY(AXIS_LENGTH + 50));
+
+    noStroke();
+    fill(255);
+    textSize(12);
+    textAlign(LEFT, CENTER);
+    text("SPACE (x)", toScreenX(AXIS_LENGTH + 60), toScreenY(0));
+    textAlign(CENTER, BOTTOM);
+    text("TIME (t)", toScreenX(0), toScreenY(AXIS_LENGTH + 60));
+}
+
+function drawSpaceProjection() {
+    // Glowing glass track
+    fill(palette.glass);
+    stroke(palette.grid);
+    strokeWeight(2);
+    rectMode(CENTER);
+    rect(WIDTH/2, PROJ_Y, AXIS_LENGTH * 2 + 100, 50, 10);
+    
+    stroke(palette.axis);
+    strokeWeight(1);
+    line(toScreenX(-AXIS_LENGTH - 40), PROJ_Y, toScreenX(AXIS_LENGTH + 40), PROJ_Y);
+
+    noStroke();
+    fill(200);
+    textSize(11);
+    textAlign(RIGHT, CENTER);
+    text("1D SPACE PROJ.", toScreenX(-AXIS_LENGTH - 60), PROJ_Y);
+
+    // Draw objects clamped to this 1D line
+    if (showAdditional) gridObjs.forEach(go => drawObject(toScreenX(go.lx), PROJ_Y, "car", palette.parallel, 0.7));
+    if (showStationary) drawObject(toScreenX(statObj.lx), PROJ_Y, "triangle", palette.stat, 0.9);
+    
+    drawObject(toScreenX(mainObj.lx), PROJ_Y, OBJ_TYPES[objIdx], getObjColor(), 0.9, isPlaying && !showSpacetime);
+}
+
+function drawTrail(trailArr, col) {
+    noFill();
+    setGlow(col, 15);
+    for (let i = 1; i < trailArr.length; i++) {
+        let alpha = map(i, 0, trailArr.length, 0, 255);
+        stroke(red(col), green(col), blue(col), alpha);
+        strokeWeight(4);
+        let p1 = trailArr[i-1];
+        let p2 = trailArr[i];
+        line(toScreenX(p1.x), toScreenY(p1.y), toScreenX(p2.x), toScreenY(p2.y));
+    }
+    clearGlow();
+}
+
+function drawObject(sx, sy, type, col, scaleFactor, showThruster = false) {
+    push();
+    translate(sx, sy);
+    scale(scaleFactor);
+
+    setGlow(col, 15);
+
+    if (type === "car") {
+        noStroke();
+        fill(col);
+        rectMode(CENTER);
+        rect(0, 0, 30, 16, 4);
+        fill(255);
+        rect(5, 0, 10, 10, 2); // Windshield
+    } 
+    else if (type === "rocket") {
+        noStroke();
+        fill(200);
+        rectMode(CENTER);
+        rect(0, 0, 14, 36, 3);
+        fill(col);
+        triangle(-7, -18, 7, -18, 0, -28); // Nose
+        fill(150);
+        triangle(-7, 10, -7, 18, -16, 18); // L Fin
+        triangle(7, 10, 7, 18, 16, 18);    // R Fin
+        
+        if (showThruster && frameCount % 6 < 3) {
+            fill(255, random(100, 200), 0);
+            triangle(-5, 18, 5, 18, 0, random(30, 45));
+        }
+    } 
+    else if (type === "humanoid") {
+        stroke(col);
+        strokeWeight(3);
+        line(0, -5, 0, 10); // Body
+        
+        // Animated walking arms and legs
+        let swing = isPlaying ? sin(frameCount * 0.2) * 8 : 0;
+        line(0, -5, -8 + swing, 5);  // L Arm
+        line(0, -5, 8 - swing, 5);   // R Arm
+        line(0, 10, -6 - swing, 20); // L Leg
+        line(0, 10, 6 + swing, 20);  // R Leg
+        
+        noStroke(); fill(col);
+        circle(0, -12, 12); // Head
+    } 
+    else if (type === "triangle") {
+        fill(col);
+        noStroke();
+        triangle(-12, 12, 12, 12, 0, -12);
+    }
+    
+    clearGlow();
+    pop();
+}
+
+function getObjColor() {
+    let type = OBJ_TYPES[objIdx];
+    if (type === "car") return palette.car;
+    if (type === "rocket") return palette.rocket;
+    return palette.humanoid;
+}
+
+function drawUI() {
+    // Left Control Panel
+    fill(palette.glass);
+    stroke(80, 80, 100);
+    strokeWeight(1);
+    rectMode(CORNER);
+    rect(15, 15, 260, 210, 8);
+
+    fill(255);
+    noStroke();
+    textAlign(LEFT, TOP);
+    textSize(14);
+    textStyle(BOLD);
+    
+    let padX = 30;
+    let padY = 30;
+    text("SIMULATION CONTROLS", padX, padY);
+    
+    textStyle(NORMAL);
+    fill(180);
+    textSize(12);
+    text("[ P ]   Play / Pause", padX, padY + 25);
+    text("[SPACE] Reset Time", padX, padY + 45);
+    text("[ O ]   Change Object Type", padX, padY + 65);
+    text("[ ↑/↓ ] Adjust Base Speed", padX, padY + 85);
+    text("[ S ]   Spawn Stationary Obj", padX, padY + 105);
+    text("[ ←/→ ] Move Stationary Obj", padX, padY + 125);
+    text("[ A ]   Spawn Parallel Grid", padX, padY + 145);
+    
+    fill(palette.rocket);
+    text("[ T ]   Toggle 2D Graph View", padX, padY + 165);
+
+    // Top Right Info Panel
+    let rightW = 200;
+    rect(WIDTH - rightW - 15, 15, rightW, 90, 8);
+    
+    textAlign(RIGHT, TOP);
+    let rightX = WIDTH - 30;
+    
+    let typeName = OBJ_TYPES[objIdx].toUpperCase();
+    fill(getObjColor());
+    textStyle(BOLD);
+    text(`OBJECT: ${typeName}`, rightX, padY);
+    
+    textStyle(NORMAL);
+    fill(255);
+    let speedStr = "RANDOM";
+    if (OBJ_TYPES[objIdx] === "car") speedStr = currentSpeed.toFixed(2);
+    if (OBJ_TYPES[objIdx] === "rocket") speedStr = rocketVel.toFixed(2) + " (ACCEL)";
+    text(`SPEED: ${speedStr}`, rightX, padY + 25);
+
+    if (showStationary) {
+        fill(palette.stat);
+        text(`STATIONARY X: ${(statObj.lx / SCALE).toFixed(1)}`, rightX, padY + 50);
+    }
+}
+
+// --- Interactions ---
+function keyPressed() {
+    let k = key.toLowerCase();
+    
+    if (keyCode === UP_ARROW) currentSpeed += 0.05;
+    if (keyCode === DOWN_ARROW) currentSpeed -= 0.05;
+    if (keyCode === LEFT_ARROW) { statObj.lx -= 20; statObj.trail = []; }
+    if (keyCode === RIGHT_ARROW) { statObj.lx += 20; statObj.trail = []; }
+    
+    if (k === 'p') isPlaying = !isPlaying;
+    if (key === ' ') resetSimulation();
+    if (k === 'a') {
+        showAdditional = !showAdditional;
+        gridObjs.forEach(go => go.trail = []);
+    }
+    if (k === 's') {
+        showStationary = !showStationary;
+        statObj.trail = [];
+    }
+    if (k === 'o') {
+        objIdx = (objIdx + 1) % OBJ_TYPES.length;
+        resetSimulation();
+    }
+    if (k === 't') showSpacetime = !showSpacetime;
+}
+</script>
+</body>
+</html>

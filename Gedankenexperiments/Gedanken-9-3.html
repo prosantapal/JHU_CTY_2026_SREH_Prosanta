@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Faraday's Induction: Relative Motion</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #030305;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+            color: white;
+        }
+        canvas {
+            box-shadow: 0 0 50px rgba(0, 0, 0, 1);
+            border-radius: 8px;
+        }
+    </style>
+</head>
+<body>
+<script>
+// --- Constants & Globals ---
+const WIDTH = 1000;
+const HEIGHT = 800;
+
+let palette;
+
+// Parallelogram/Wire loop parameters
+const PARA_WIDTH = 100;
+const PARA_HEIGHT = 250;
+const PARA_SKEW = 120; // How much the parallelogram is skewed horizontally
+
+// Magnet parameters
+const MAG_LENGTH = 280; // Total length
+const POLE_WIDTH = 45;
+const POLE_HEIGHT = 80;
+const BODY_HEIGHT = 50;
+
+// State & Movement
+let loopXOffset = 0;
+let magnetXOffset = 0;
+let loopMoveSpeed = 0;
+let magnetMoveSpeed = 0;
+
+const MAX_SPEED = 6;
+const ACCEL = 0.15;
+const DECEL = 0.25;
+
+let currentDirection = 1; // 1 for right, -1 for left
+let mode = "loop"; // "loop" or "magnet"
+
+// Balls (Charges)
+const NUM_BALLS = 15;
+const BALL_RADIUS = 6;
+let ballSpeed = 0;
+let balls = [];
+let totalPerimeter = 0;
+
+function setup() {
+    createCanvas(WIDTH, HEIGHT);
+    
+    palette = {
+        bg: color(10, 12, 18),
+        wireBase: color(40, 50, 60),
+        wireGlow: color(0, 255, 200), // Neon Cyan
+        charge: color(255, 220, 50),  // Bright Yellow/Orange
+        north: color(255, 50, 50),    // Neon Red
+        south: color(50, 120, 255),   // Neon Blue
+        magBody: color(30, 30, 35),
+        highlight: color(255, 255, 255, 150),
+        panel: color(20, 25, 30, 200)
+    };
+
+    let verts = calculateVertices(0);
+    totalPerimeter = calculatePerimeter(verts);
+    initializeBalls();
+}
+
+// --- Math & Geometry Helpers ---
+function mod(n, m) {
+    return ((n % m) + m) % m;
+}
+
+function setGlow(clr, blurSize) {
+    drawingContext.shadowBlur = blurSize;
+    drawingContext.shadowColor = clr.toString();
+}
+
+function clearGlow() {
+    drawingContext.shadowBlur = 0;
+}
+
+function calculateVertices(xOffset) {
+    let cx = WIDTH / 2 + xOffset;
+    let cy = HEIGHT / 2;
+    let pw = PARA_WIDTH / 2;
+    let ph = PARA_HEIGHT / 2;
+    let ps = PARA_SKEW / 2;
+
+    return [
+        {x: cx - pw - ps, y: cy - ph}, // Top Left
+        {x: cx + pw - ps, y: cy - ph}, // Top Right
+        {x: cx + pw + ps, y: cy + ph}, // Bottom Right
+        {x: cx - pw + ps, y: cy + ph}  // Bottom Left
+    ];
+}
+
+function calculatePerimeter(verts) {
+    let d1 = dist(verts[0].x, verts[0].y, verts[1].x, verts[1].y);
+    let d2 = dist(verts[1].x, verts[1].y, verts[2].x, verts[2].y);
+    let d3 = dist(verts[2].x, verts[2].y, verts[3].x, verts[3].y);
+    let d4 = dist(verts[3].x, verts[3].y, verts[0].x, verts[0].y);
+    return d1 + d2 + d3 + d4;
+}
+
+function getPointOnPerimeter(pos, verts) {
+    pos = mod(pos, totalPerimeter);
+    
+    let l1 = dist(verts[0].x, verts[0].y, verts[1].x, verts[1].y);
+    let l2 = dist(verts[1].x, verts[1].y, verts[2].x, verts[2].y);
+    let l3 = dist(verts[2].x, verts[2].y, verts[3].x, verts[3].y);
+    let l4 = dist(verts[3].x, verts[3].y, verts[0].x, verts[0].y);
+
+    if (pos < l1) {
+        let t = pos / l1;
+        return {
+            x: lerp(verts[0].x, verts[1].x, t),
+            y: lerp(verts[0].y, verts[1].y, t)
+        };
+    } else if (pos < l1 + l2) {
+        pos -= l1;
+        let t = pos / l2;
+        return {
+            x: lerp(verts[1].x, verts[2].x, t),
+            y: lerp(verts[1].y, verts[2].y, t)
+        };
+    } else if (pos < l1 + l2 + l3) {
+        pos -= (l1 + l2);
+        let t = pos / l3;
+        return {
+            x: lerp(verts[2].x, verts[3].x, t),
+            y: lerp(verts[2].y, verts[3].y, t)
+        };
+    } else {
+        pos -= (l1 + l2 + l3);
+        let t = pos / l4;
+        return {
+            x: lerp(verts[3].x, verts[0].x, t),
+            y: lerp(verts[3].y, verts[0].y, t)
+        };
+    }
+}
+
+function initializeBalls() {
+    balls = [];
+    let spacing = totalPerimeter / NUM_BALLS;
+    for (let i = 0; i < NUM_BALLS; i++) {
+        balls.push(i * spacing);
+    }
+}
+
+// --- Main Draw Loop ---
+function draw() {
+    background(palette.bg);
+    handleInputAndPhysics();
+
+    let verts = calculateVertices(loopXOffset);
+    
+    // Draw Environment
+    drawGrid();
+
+    // Draw Magnet (behind the wire loop)
+    drawMagnet();
+
+    // Draw Wire Loop
+    drawLoop(verts);
+
+    // Draw Charges (Current)
+    drawBalls(verts);
+
+    // Draw UI
+    drawUI();
+}
+
+function handleInputAndPhysics() {
+    // Loop Movement Logic
+    if (mode === "loop") {
+        if (!keyIsDown(LEFT_ARROW) && !keyIsDown(RIGHT_ARROW)) {
+            if (abs(loopMoveSpeed) > 0.1) {
+                loopMoveSpeed -= DECEL * Math.sign(loopMoveSpeed);
+            } else {
+                loopMoveSpeed = 0;
+                ballSpeed = 0;
+            }
+        } else {
+            if (keyIsDown(LEFT_ARROW)) {
+                loopMoveSpeed -= ACCEL;
+                currentDirection = -1; // Moving loop left -> current moves opposite
+            }
+            if (keyIsDown(RIGHT_ARROW)) {
+                loopMoveSpeed += ACCEL;
+                currentDirection = 1;  // Moving loop right
+            }
+            loopMoveSpeed = constrain(loopMoveSpeed, -MAX_SPEED, MAX_SPEED);
+            ballSpeed = abs(loopMoveSpeed) * currentDirection;
+        }
+        loopXOffset += loopMoveSpeed;
+        
+        // Boundaries
+        if (loopXOffset < -WIDTH/2 + 100) { loopXOffset = -WIDTH/2 + 100; loopMoveSpeed = 0; }
+        if (loopXOffset > WIDTH/2 - 100) { loopXOffset = WIDTH/2 - 100; loopMoveSpeed = 0; }
+    
+    // Magnet Movement Logic
+    } else {
+        if (!keyIsDown(LEFT_ARROW) && !keyIsDown(RIGHT_ARROW)) {
+            if (abs(magnetMoveSpeed) > 0.1) {
+                magnetMoveSpeed -= DECEL * Math.sign(magnetMoveSpeed);
+            } else {
+                magnetMoveSpeed = 0;
+                ballSpeed = 0;
+            }
+        } else {
+            if (keyIsDown(LEFT_ARROW)) {
+                magnetMoveSpeed -= ACCEL;
+                // Moving magnet left is relatively the same as moving loop right
+                currentDirection = 1; 
+            }
+            if (keyIsDown(RIGHT_ARROW)) {
+                magnetMoveSpeed += ACCEL;
+                // Moving magnet right is relatively the same as moving loop left
+                currentDirection = -1; 
+            }
+            magnetMoveSpeed = constrain(magnetMoveSpeed, -MAX_SPEED, MAX_SPEED);
+            ballSpeed = abs(magnetMoveSpeed) * currentDirection;
+        }
+        magnetXOffset += magnetMoveSpeed;
+
+        // Boundaries
+        if (magnetXOffset < -150) { magnetXOffset = -150; magnetMoveSpeed = 0; }
+        if (magnetXOffset > WIDTH/2) { magnetXOffset = WIDTH/2; magnetMoveSpeed = 0; }
+    }
+}
+
+// --- Drawing Functions ---
+function drawGrid() {
+    stroke(255, 255, 255, 10);
+    strokeWeight(1);
+    for(let x=0; x<WIDTH; x+=40) line(x, 0, x, HEIGHT);
+    for(let y=0; y<HEIGHT; y+=40) line(0, y, WIDTH, y);
+}
+
+function drawMagnet() {
+    let magY = HEIGHT / 2;
+    let xN = 100 + magnetXOffset; // North pole center
+    let xS = xN + MAG_LENGTH - POLE_WIDTH; // South pole center
+    
+    // Selection Highlight
+    if (mode === "magnet") {
+        noFill();
+        stroke(palette.highlight);
+        strokeWeight(3);
+        rectMode(CENTER);
+        rect(xN + (MAG_LENGTH-POLE_WIDTH)/2, magY, MAG_LENGTH + 20, POLE_HEIGHT + 20, 8);
+    }
+
+    rectMode(CENTER);
+    
+    // Body
+    fill(palette.magBody);
+    noStroke();
+    rect(xN + (MAG_LENGTH-POLE_WIDTH)/2, magY, MAG_LENGTH - POLE_WIDTH, BODY_HEIGHT);
+
+    // North Pole
+    setGlow(palette.north, 20);
+    fill(palette.north);
+    rect(xN, magY, POLE_WIDTH, POLE_HEIGHT, 6, 0, 0, 6);
+    clearGlow();
+    
+    fill(255);
+    textSize(24);
+    textStyle(BOLD);
+    textAlign(CENTER, CENTER);
+    text("N", xN, magY);
+
+    // South Pole
+    setGlow(palette.south, 20);
+    fill(palette.south);
+    rect(xS, magY, POLE_WIDTH, POLE_HEIGHT, 0, 6, 6, 0);
+    clearGlow();
+
+    fill(255);
+    text("S", xS, magY);
+}
+
+function drawLoop(verts) {
+    // Selection Highlight
+    if (mode === "loop") {
+        noFill();
+        stroke(palette.highlight);
+        strokeWeight(3);
+        beginShape();
+        verts.forEach(v => vertex(v.x, v.y));
+        endShape(CLOSE);
+    }
+
+    // Glowing Wire
+    noFill();
+    setGlow(palette.wireGlow, 15);
+    stroke(palette.wireGlow);
+    strokeWeight(4);
+    beginShape();
+    verts.forEach(v => vertex(v.x, v.y));
+    endShape(CLOSE);
+    clearGlow();
+
+    // Wire Core
+    stroke(255, 255, 255, 200);
+    strokeWeight(1);
+    beginShape();
+    verts.forEach(v => vertex(v.x, v.y));
+    endShape(CLOSE);
+}
+
+function drawBalls(verts) {
+    for (let i = 0; i < balls.length; i++) {
+        // Update Position
+        balls[i] = mod(balls[i] + ballSpeed, totalPerimeter);
+        let pos = getPointOnPerimeter(balls[i], verts);
+
+        // Draw Glowing Charge
+        setGlow(palette.charge, 15);
+        fill(palette.charge);
+        noStroke();
+        circle(pos.x, pos.y, BALL_RADIUS * 2);
+        clearGlow();
+
+        // Draw Directional Chevrons
+        if (abs(ballSpeed) > 0.1) {
+            let dir = Math.sign(ballSpeed);
+            let nextPos = getPointOnPerimeter(balls[i] + dir * 2, verts); // Look slightly ahead
+            
+            let dx = nextPos.x - pos.x;
+            let dy = nextPos.y - pos.y;
+            let angle = atan2(dy, dx);
+            
+            push();
+            translate(pos.x, pos.y);
+            rotate(angle);
+            fill(255);
+            noStroke();
+            // Chevron arrow
+            triangle(6, 0, -4, 4, -4, -4);
+            pop();
+        }
+    }
+}
+
+function drawUI() {
+    let panelW = 320;
+    let panelH = 135;
+    
+    fill(palette.panel);
+    stroke(80);
+    strokeWeight(1);
+    rectMode(CORNER);
+    rect(15, 15, panelW, panelH, 10);
+
+    fill(255);
+    noStroke();
+    textAlign(LEFT, TOP);
+    textSize(16);
+    textStyle(BOLD);
+    text("FARADAY'S INDUCTION", 30, 30);
+    
+    textStyle(NORMAL);
+    textSize(13);
+    fill(180, 180, 200);
+    text("[TAB] Switch Control: " + (mode === "loop" ? "Wire Loop" : "Magnet"), 30, 60);
+    text("[←] [→] Move Selected Object", 30, 80);
+    
+    // Dynamic readout
+    let currentText = "CURRENT: ";
+    if (abs(ballSpeed) < 0.1) {
+        fill(100, 100, 100);
+        currentText += "0.0 A (No relative motion)";
+    } else {
+        fill(palette.charge);
+        let dirStr = ballSpeed > 0 ? "Clockwise" : "Counter-Clockwise";
+        currentText += `${abs(ballSpeed).toFixed(1)} A (${dirStr})`;
+    }
+    text(currentText, 30, 110);
+}
+
+// --- Interactions ---
+function keyPressed() {
+    if (keyCode === TAB) {
+        mode = (mode === "loop") ? "magnet" : "loop";
+        return false; // Prevent default tab behavior (moving browser focus)
+    }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Relativistic Billiards</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.6.0/p5.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #121212;
+            color: #ffffff;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        h2 { margin-top: 0; }
+        #ui-container {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 15px;
+            background: #1e1e1e;
+            padding: 15px 30px;
+            border-radius: 8px;
+            border: 1px solid #333;
+            align-items: center;
+        }
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        button {
+            padding: 10px 20px;
+            background-color: #ff9800;
+            color: black;
+            border: none;
+            border-radius: 5px;
+            font-weight: bold;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background 0.2s;
+        }
+        button:hover { background-color: #e68a00; }
+        
+        #main-area {
+            display: flex;
+            gap: 20px;
+            align-items: flex-start;
+        }
+        canvas {
+            border-radius: 8px;
+            box-shadow: 0 8px 25px rgba(0,0,0,0.8);
+        }
+        #stats-panel {
+            background: #1a271d;
+            border: 2px solid #2e4433;
+            border-radius: 8px;
+            padding: 20px;
+            width: 250px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            font-size: 15px;
+            line-height: 1.8;
+        }
+        .stat-value {
+            font-weight: bold;
+            color: #4CAF50;
+            font-size: 18px;
+        }
+        .score-box {
+            background: #0f1711;
+            padding: 10px;
+            border-radius: 5px;
+            text-align: center;
+            border: 1px solid #4CAF50;
+            margin-bottom: 15px;
+        }
+        .score-value {
+            font-size: 32px;
+            font-weight: bold;
+            color: #ff5252;
+        }
+        .classical-note {
+            color: #888;
+            font-size: 13px;
+            margin-top: -5px;
+            display: block;
+        }
+    </style>
+</head>
+<body>
+
+    <h2>Relativistic Billiards</h2>
+    
+    <div id="ui-container">
+        <div class="control-group">
+            <label for="velocitySlider">Cue Ball Velocity (v/c): <span id="velDisplay">0.50</span></label>
+            <input type="range" id="velocitySlider" min="0.01" max="0.99" value="0.50" step="0.01">
+        </div>
+        <div class="control-group">
+            <label for="impactSlider">Impact Parameter (Offset): <span id="impactDisplay">15</span></label>
+            <input type="range" id="impactSlider" min="-38" max="38" value="15" step="1">
+        </div>
+        <div class="control-group" style="flex-direction: row; gap: 10px;">
+            <button id="shootBtn">Shoot!</button>
+            <button id="resetBtn" style="background-color: #555; color: white;">Reset</button>
+        </div>
+    </div>
+
+    <div id="main-area">
+        <div id="canvas-container"></div>
+        
+        <div id="stats-panel">
+            <div class="score-box">
+                Balls Pocketed<br>
+                <span class="score-value" id="stat-score">0</span>
+            </div>
+
+            <div>Initial Speed: <br><span class="stat-value" id="stat-speed">50% c</span></div>
+            <div style="margin-top: 10px;">Lorentz Factor (γ): <br><span class="stat-value" id="stat-gamma">1.15</span></div>
+            
+            <hr style="border-color: #2e4433; margin: 15px 0;">
+            
+            <div>Relativistic Scatter Angle: <br><span class="stat-value" id="stat-angle">--</span></div>
+            <span class="classical-note">(Classical Expectation: 90.0°)</span>
+        </div>
+    </div>
+
+<script>
+    // --- AUDIO SYNTHESIZER ---
+    // Generates sounds dynamically without needing external mp3 files
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    const audioCtx = new AudioContext();
+
+    function playSound(type) {
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        let osc = audioCtx.createOscillator();
+        let gain = audioCtx.createGain();
+        
+        if (type === 'hit') {
+            // Sharp 'clack' sound for collisions
+            osc.type = 'triangle';
+            osc.frequency.setValueAtTime(800, audioCtx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(100, audioCtx.currentTime + 0.1);
+            gain.gain.setValueAtTime(1, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+            osc.start();
+            osc.stop(audioCtx.currentTime + 0.1);
+        } else if (type === 'pocket') {
+            // Low descending 'plop' sound for pockets
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(300, audioCtx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(50, audioCtx.currentTime + 0.3);
+            gain.gain.setValueAtTime(1, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+            osc.start();
+            osc.stop(audioCtx.currentTime + 0.3);
+        }
+        
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+    }
+
+    // --- PHYSICS CONSTANTS ---
+    const C_VISUAL = 12; 
+    const R = 20; 
+    const MASS = 1.0; 
+    const MARGIN = 35; // Size of the table cushions
+
+    // --- STATE VARIABLES ---
+    let v_c = 0.50; 
+    let impactOffset = 15; 
+    let state = 'idle'; 
+    let score = 0;
+
+    let ball1, ball2;
+    let trails1 = [], trails2 = [];
+    let collisionX = 0; 
+    let relAngle = 0; 
+
+    // Define Pocket Locations
+    let pockets = [];
+
+    // --- UI ELEMENTS ---
+    let velSlider, impactSlider, shootBtn, resetBtn;
+
+    function setup() {
+        let canvas = createCanvas(800, 450);
+        canvas.parent('canvas-container');
+
+        // Setup Pockets based on canvas size
+        let pR = 36; // Pocket radius
+        pockets = [
+            {x: MARGIN, y: MARGIN, r: pR}, // Top Left
+            {x: width / 2, y: MARGIN - 5, r: pR}, // Top Center
+            {x: width - MARGIN, y: MARGIN, r: pR}, // Top Right
+            {x: MARGIN, y: height - MARGIN, r: pR}, // Bottom Left
+            {x: width / 2, y: height - MARGIN + 5, r: pR}, // Bottom Center
+            {x: width - MARGIN, y: height - MARGIN, r: pR} // Bottom Right
+        ];
+
+        velSlider = document.getElementById('velocitySlider');
+        impactSlider = document.getElementById('impactSlider');
+        shootBtn = document.getElementById('shootBtn');
+        resetBtn = document.getElementById('resetBtn');
+
+        velSlider.addEventListener('input', () => {
+            document.getElementById('velDisplay').innerText = parseFloat(velSlider.value).toFixed(2);
+            updateStatsHUD();
+            if (state === 'idle') resetTable();
+        });
+        
+        impactSlider.addEventListener('input', () => {
+            document.getElementById('impactDisplay').innerText = impactSlider.value;
+            if (state === 'idle') resetTable();
+        });
+
+        shootBtn.addEventListener('click', () => {
+            if (state === 'idle') {
+                audioCtx.resume(); // Ensure audio context is active
+                state = 'moving';
+            }
+        });
+
+        resetBtn.addEventListener('click', resetTable);
+
+        resetTable();
+    }
+
+    function resetTable() {
+        v_c = parseFloat(velSlider.value);
+        impactOffset = parseFloat(impactSlider.value);
+        state = 'idle';
+        trails1 = [];
+        trails2 = [];
+        relAngle = 0;
+
+        // Position Balls
+        ball1 = { x: 150, y: height / 2, vx: 0, vy: 0, c: color(255, 255, 255), active: true, scale: 1.0 }; // Cue Ball
+        ball2 = { x: 450, y: height / 2 + impactOffset, vx: 0, vy: 0, c: color(255, 60, 60), active: true, scale: 1.0 }; // Target Ball
+
+        // Pre-calculate collision point
+        let dy = ball2.y - ball1.y;
+        let dx_impact = sqrt(pow(2 * R, 2) - pow(dy, 2));
+        collisionX = ball2.x - dx_impact;
+
+        updateStatsHUD();
+    }
+
+    function draw() {
+        drawBilliardTable();
+
+        if (state === 'moving') {
+            ball1.vx = v_c * C_VISUAL;
+            ball1.x += ball1.vx;
+
+            if (ball1.x >= collisionX) {
+                ball1.x = collisionX; 
+                calculateRelativisticCollision();
+                playSound('hit');
+                state = 'scattered';
+                updateStatsHUD(); 
+            }
+        } else if (state === 'scattered') {
+            updateBall(ball1);
+            updateBall(ball2);
+
+            // Record trails for active balls
+            if (frameCount % 2 === 0) {
+                if(ball1.active) trails1.push({x: ball1.x, y: ball1.y});
+                if(ball2.active) trails2.push({x: ball2.x, y: ball2.y});
+            }
+        }
+
+        drawTrails();
+        drawBalls();
+    }
+
+    function updateBall(b) {
+        if (!b.active) {
+            // Animate falling into the pocket
+            if (b.scale > 0) b.scale -= 0.1;
+            if (b.scale < 0) b.scale = 0;
+            return;
+        }
+
+        b.x += b.vx * C_VISUAL;
+        b.y += b.vy * C_VISUAL;
+
+        // 1. Check Pockets
+        for (let p of pockets) {
+            let d = dist(b.x, b.y, p.x, p.y);
+            if (d < p.r - 5) {
+                b.active = false;
+                b.x = p.x; // Snap to pocket center
+                b.y = p.y;
+                playSound('pocket');
+                
+                // If it's the red ball, increase score
+                if (b.c.toString() === color(255, 60, 60).toString()) {
+                    score++;
+                    document.getElementById('stat-score').innerText = score;
+                }
+                return;
+            }
+        }
+
+        // 2. Check Walls (Cushion Bounce)
+        let hitWall = false;
+        if (b.x < MARGIN + R) { b.x = MARGIN + R; b.vx *= -1; hitWall = true; }
+        if (b.x > width - MARGIN - R) { b.x = width - MARGIN - R; b.vx *= -1; hitWall = true; }
+        if (b.y < MARGIN + R) { b.y = MARGIN + R; b.vy *= -1; hitWall = true; }
+        if (b.y > height - MARGIN - R) { b.y = height - MARGIN - R; b.vy *= -1; hitWall = true; }
+        
+        if (hitWall) playSound('hit');
+    }
+
+    function drawBilliardTable() {
+        background(15, 15, 15);
+
+        // 1. Wood Rim
+        fill(92, 58, 33);
+        rect(10, 10, width - 20, height - 20, 15);
+        
+        // 2. Green Felt
+        fill(25, 75, 40);
+        rect(MARGIN, MARGIN, width - (MARGIN*2), height - (MARGIN*2));
+
+        // 3. Center Line and Spots
+        stroke(255, 255, 255, 20);
+        strokeWeight(2);
+        line(width / 2, MARGIN, width / 2, height - MARGIN);
+        noStroke();
+        fill(255, 255, 255, 40);
+        ellipse(450, height/2, 6); 
+        ellipse(150, height/2, 6); 
+
+        // 4. Draw Pockets
+        fill(10);
+        for (let p of pockets) {
+            ellipse(p.x, p.y, p.r * 2);
+        }
+    }
+
+    function calculateRelativisticCollision() {
+        // Relativistic Elastic Scattering Engine
+        let gamma = 1 / sqrt(1 - v_c * v_c);
+        let b = impactOffset; 
+        
+        let beta_cm = (gamma * v_c) / (gamma + 1);
+        let gamma_cm = sqrt((gamma + 1) / 2);
+
+        let E_star = sqrt((2 * gamma + 2) / 4);
+        let p_star = sqrt((gamma - 1) / 2);
+
+        let sign = (b >= 0) ? 1 : -1; 
+        let alpha = asin(abs(b) / (2 * R));
+        let theta_star = PI - 2 * alpha; 
+
+        let p1x_star = p_star * cos(theta_star);
+        let p1y_star = -sign * p_star * sin(theta_star); 
+        
+        let p2x_star = -p1x_star;
+        let p2y_star = -p1y_star;
+
+        let E1_lab = gamma_cm * (E_star + beta_cm * p1x_star);
+        let p1x_lab = gamma_cm * (p1x_star + beta_cm * E_star);
+        let p1y_lab = p1y_star;
+
+        let E2_lab = gamma_cm * (E_star + beta_cm * p2x_star);
+        let p2x_lab = gamma_cm * (p2x_star + beta_cm * E_star);
+        let p2y_lab = p2y_star;
+
+        ball1.vx = p1x_lab / E1_lab;
+        ball1.vy = p1y_lab / E1_lab;
+        
+        ball2.vx = p2x_lab / E2_lab;
+        ball2.vy = p2y_lab / E2_lab;
+
+        let angle1 = atan2(ball1.vy, ball1.vx);
+        let angle2 = atan2(ball2.vy, ball2.vx);
+        relAngle = abs(degrees(angle1) - degrees(angle2));
+    }
+
+    function drawBalls() {
+        noStroke();
+        
+        // Draw shadows (only if ball is visible/active)
+        fill(0, 0, 0, 100);
+        if (ball2.scale > 0) ellipse(ball2.x + 3, ball2.y + 3, R * 2 * ball2.scale);
+        if (ball1.scale > 0) ellipse(ball1.x + 3, ball1.y + 3, R * 2 * ball1.scale);
+
+        // Target Ball
+        if (ball2.scale > 0) {
+            fill(ball2.c);
+            ellipse(ball2.x, ball2.y, R * 2 * ball2.scale);
+        }
+        
+        // Cue Ball
+        if (ball1.scale > 0) {
+            fill(ball1.c);
+            ellipse(ball1.x, ball1.y, R * 2 * ball1.scale);
+        }
+    }
+
+    function drawTrails() {
+        noFill();
+        strokeWeight(3);
+        
+        stroke(255, 255, 255, 120);
+        beginShape();
+        for (let pt of trails1) vertex(pt.x, pt.y);
+        endShape();
+
+        stroke(255, 60, 60, 120);
+        beginShape();
+        for (let pt of trails2) vertex(pt.x, pt.y);
+        endShape();
+    }
+
+    function updateStatsHUD() {
+        let gamma = 1 / Math.sqrt(1 - (v_c * v_c));
+        
+        document.getElementById('stat-speed').innerText = `${(v_c * 100).toFixed(0)}% c`;
+        document.getElementById('stat-gamma').innerText = gamma.toFixed(2);
+        
+        if (state === 'scattered') {
+            document.getElementById('stat-angle').innerText = `${relAngle.toFixed(1)}°`;
+            document.getElementById('stat-angle').style.color = (relAngle < 88) ? "#ff5252" : "#4CAF50"; 
+        } else {
+            document.getElementById('stat-angle').innerText = `--`;
+            document.getElementById('stat-angle').style.color = "#4CAF50";
+        }
+    }
+</script>
+</body>
+</html>

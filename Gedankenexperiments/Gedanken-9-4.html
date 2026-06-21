@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Electrostatics</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #030305;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+            color: white;
+        }
+        canvas {
+            box-shadow: 0 0 50px rgba(0, 0, 0, 1);
+            border-radius: 8px;
+            cursor: grab;
+        }
+        canvas:active {
+            cursor: grabbing;
+        }
+    </style>
+</head>
+<body>
+<script>
+// --- Constants & Globals ---
+const WIDTH = 800;
+const HEIGHT = 600;
+
+// Physics Constants
+const FRICTION = 0.95;
+const MIN_VELOCITY = 0.1;
+const CHARGE_FORCE = 100000;
+const ELASTICITY = 0.8;
+
+// Charge Types
+const POSITIVE = 1;
+const NEGATIVE = -1;
+
+let charges = [];
+let selectedCharge = null;
+let palette;
+
+function setup() {
+    createCanvas(WIDTH, HEIGHT);
+    
+    palette = {
+        bg: color(10, 12, 18),
+        pos: color(255, 50, 80),    // Neon Red
+        neg: color(50, 150, 255),   // Neon Blue
+        white: color(255, 255, 255),
+        selected: color(0, 255, 150) // Neon Green highlight
+    };
+
+    // Initialize Charges based on original code
+    charges.push(new Charge(350, 200, POSITIVE));
+    charges.push(new Charge(450, 200, POSITIVE));
+    charges.push(new Charge(350, 400, NEGATIVE));
+    charges.push(new Charge(450, 400, NEGATIVE));
+}
+
+// --- Native Glow Helper ---
+function setGlow(clr, blurSize) {
+    drawingContext.shadowBlur = blurSize;
+    drawingContext.shadowColor = clr.toString();
+}
+
+function clearGlow() {
+    drawingContext.shadowBlur = 0;
+}
+
+// --- Charge Class ---
+class Charge {
+    constructor(x, y, type) {
+        this.x = x;
+        this.y = y;
+        this.vx = 0;
+        this.vy = 0;
+        this.type = type; // 1 for Positive, -1 for Negative
+        this.selected = false;
+        this.radius = 15;
+    }
+
+    containsPoint(px, py) {
+        let d = dist(px, py, this.x, this.y);
+        return d <= this.radius + 5; // Slightly larger hit area for easier grabbing
+    }
+
+    checkCollision(other) {
+        let d = dist(this.x, this.y, other.x, other.y);
+        return d < (this.radius + other.radius);
+    }
+
+    updatePosition(allCharges) {
+        if (!this.selected) {
+            let oldX = this.x;
+            let oldY = this.y;
+            
+            this.x += this.vx;
+            this.y += this.vy;
+
+            // Wall Collisions
+            if (this.x < this.radius) {
+                this.x = this.radius;
+                this.vx *= -ELASTICITY;
+            } else if (this.x > WIDTH - this.radius) {
+                this.x = WIDTH - this.radius;
+                this.vx *= -ELASTICITY;
+            }
+
+            if (this.y < this.radius) {
+                this.y = this.radius;
+                this.vy *= -ELASTICITY;
+            } else if (this.y > HEIGHT - this.radius) {
+                this.y = HEIGHT - this.radius;
+                this.vy *= -ELASTICITY;
+            }
+
+            // Charge-to-Charge Collisions
+            for (let other of allCharges) {
+                if (other === this) continue;
+                if (this.checkCollision(other)) {
+                    this.x = oldX;
+                    this.y = oldY;
+                    this.vx *= -ELASTICITY;
+                    this.vy *= -ELASTICITY;
+                    break;
+                }
+            }
+
+            // Friction & Minimum Velocity
+            this.vx *= FRICTION;
+            this.vy *= FRICTION;
+            if (abs(this.vx) < MIN_VELOCITY && abs(this.vy) < MIN_VELOCITY) {
+                this.vx = 0;
+                this.vy = 0;
+            }
+        }
+    }
+
+    draw() {
+        let col = this.type === POSITIVE ? palette.pos : palette.neg;
+        let symbol = this.type === POSITIVE ? "+" : "-";
+
+        push();
+        translate(this.x, this.y);
+
+        // Selection Highlight
+        if (this.selected) {
+            noFill();
+            stroke(palette.selected);
+            strokeWeight(3);
+            setGlow(palette.selected, 15);
+            circle(0, 0, this.radius * 2 + 12);
+            clearGlow();
+        }
+
+        // Main Body Glow
+        setGlow(col, 25);
+        fill(col);
+        noStroke();
+        circle(0, 0, this.radius * 2);
+        
+        // Inner Core
+        fill(255, 255, 255, 200);
+        circle(0, 0, this.radius);
+        clearGlow();
+
+        // Symbol (+ or -)
+        fill(palette.white);
+        noStroke();
+        textAlign(CENTER, CENTER);
+        textSize(20);
+        textStyle(BOLD);
+        text(symbol, 0, -2); // Slight Y offset to perfectly center text
+
+        pop();
+    }
+}
+
+// --- Physics Logic ---
+function calculateForces() {
+    for (let i = 0; i < charges.length; i++) {
+        let obj1 = charges[i];
+        if (obj1.selected) continue;
+        
+        let fx = 0;
+        let fy = 0;
+        
+        for (let j = 0; j < charges.length; j++) {
+            if (i === j) continue;
+            
+            let obj2 = charges[j];
+            let dx = obj2.x - obj1.x;
+            let dy = obj2.y - obj1.y;
+            let distSq = dx * dx + dy * dy;
+            let distance = sqrt(distSq);
+            
+            if (distance < 1) continue;
+            
+            // Coulomb's Law: F = k * (q1 * q2) / r^2
+            let force = CHARGE_FORCE * (obj1.type * obj2.type) / distSq;
+            let dirX = dx / distance;
+            let dirY = dy / distance;
+            
+            fx += -force * dirX;
+            fy += -force * dirY;
+        }
+        
+        obj1.vx += fx * 0.01;
+        obj1.vy += fy * 0.01;
+    }
+}
+
+// --- Main Draw Loop ---
+function draw() {
+    background(palette.bg);
+    
+    // Grid Background for scale
+    drawGrid();
+
+    // Physics
+    calculateForces();
+    
+    // Update and Draw
+    for (let charge of charges) {
+        charge.updatePosition(charges);
+        charge.draw();
+    }
+
+    drawInstructions();
+}
+
+// --- UI Helpers ---
+function drawGrid() {
+    stroke(255, 255, 255, 10);
+    strokeWeight(1);
+    for (let x = 0; x <= WIDTH; x += 50) {
+        line(x, 0, x, HEIGHT);
+    }
+    for (let y = 0; y <= HEIGHT; y += 50) {
+        line(0, y, WIDTH, y);
+    }
+}
+
+function drawInstructions() {
+    fill(palette.white);
+    noStroke();
+    textSize(14);
+    textAlign(LEFT, TOP);
+    textStyle(BOLD);
+    text("ELECTROSTATICS SANDBOX", 15, 15);
+    
+    textStyle(NORMAL);
+    fill(180, 180, 200);
+    text("Drag and drop the particles to interact.", 15, 40);
+    text("Opposite charges attract. Like charges repel.", 15, 60);
+    text("Physics uses Coulomb's Inverse-Square Law.", 15, 80);
+}
+
+// --- Input Handling ---
+function mousePressed() {
+    for (let charge of charges) {
+        if (charge.containsPoint(mouseX, mouseY)) {
+            selectedCharge = charge;
+            charge.selected = true;
+            charge.vx = 0;
+            charge.vy = 0;
+            break;
+        }
+    }
+}
+
+function mouseDragged() {
+    if (selectedCharge) {
+        selectedCharge.x = mouseX;
+        selectedCharge.y = mouseY;
+    }
+}
+
+function mouseReleased() {
+    if (selectedCharge) {
+        selectedCharge.selected = false;
+        selectedCharge = null;
+    }
+}
+</script>
+</body>
+</html>

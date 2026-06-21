@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Relativity & Reference Frames Simulation</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #030305;
+            font-family: 'Courier New', Courier, monospace;
+            overflow: hidden;
+            color: white;
+            user-select: none;
+        }
+        canvas {
+            box-shadow: 0 0 50px rgba(0, 0, 0, 1);
+            border-radius: 8px;
+        }
+    </style>
+</head>
+<body>
+<script>
+// --- Constants & Globals ---
+const WIDTH = 800;
+const HEIGHT = 600;
+const GROUND_Y = (HEIGHT * 2) / 3;
+
+// Physics Constants
+const C_SPEED = 10; 
+let platformSpeed = 5; 
+
+// State Flags
+let selectedRef = 0;   // 0 = Green Platform, 2 = White Ground
+let trailMode = false;
+let freezeMode = false;
+let frameByFrame = false;
+
+// Entities
+let stars = [];
+let photons = [];
+let wavefronts = [];
+let platform;
+
+// Stopwatches
+let timePlatform = 0;
+let timeGround = 0;
+let stopwatchGroundX = 100;
+
+// UI & Timing
+let yellowArmed = true;
+let buttons = [];
+let slider;
+let palette;
+let trailGraphics;
+
+function setup() {
+    createCanvas(WIDTH, HEIGHT);
+    trailGraphics = createGraphics(WIDTH, HEIGHT);
+    
+    palette = {
+        bg: color(5, 5, 12),
+        stars: color(255),
+        green: color(0, 255, 100),
+        yellow: color(255, 220, 0),
+        white: color(255),
+        red: color(255, 50, 80),
+        blue: color(50, 150, 255),
+        purple: color(180, 50, 255),
+        wave: color(100, 100, 255, 150),
+        ground: color(30, 30, 40),
+        ruler: color(100, 100, 120),
+        uiBg: color(15, 20, 25, 220)
+    };
+
+    // Initialize Stars
+    for (let i = 0; i < 20; i++) {
+        stars.push({
+            x: random(WIDTH), y: random(GROUND_Y),
+            r: random(2, 5)
+        });
+    }
+
+    // Initialize Platform
+    platform = { x: 100, y: GROUND_Y - 20, w: 160, h: 20 };
+
+    setupUI();
+}
+
+function setupUI() {
+    // Increased panel height and separated rows
+    let cbW = 700, cbH = 110; 
+    let cx = WIDTH / 2;
+    let panelY = HEIGHT - cbH - 10;
+
+    buttons.panel = { x: cx - cbW/2, y: panelY, w: cbW, h: cbH };
+
+    let btnY = panelY + 40; // Top row for buttons
+    let spc = 80;
+    let bR = 18;
+
+    // Buttons
+    buttons.push({ id: 0, x: cx - 2.5*spc, y: btnY, r: bR, c: palette.green,  label: "PLATFORM" });
+    buttons.push({ id: 1, x: cx - 1.5*spc, y: btnY, r: bR, c: palette.yellow, label: "SHOOT" });
+    buttons.push({ id: 2, x: cx - 0.5*spc, y: btnY, r: bR, c: palette.white,  label: "GROUND" });
+    buttons.push({ id: 3, x: cx + 0.5*spc, y: btnY, r: bR, c: palette.red,    label: "TRAILS" });
+    buttons.push({ id: 4, x: cx + 1.5*spc, y: btnY, r: bR, c: palette.blue,   label: "STEP" });
+    buttons.push({ id: 5, x: cx + 2.5*spc, y: btnY, r: bR, c: palette.purple, label: "PLAY" });
+
+    // Slider on bottom row
+    let sldY = panelY + 85; 
+    slider = {
+        x: cx - 125, y: sldY, w: 250, h: 8,
+        min: 0, max: C_SPEED, val: platformSpeed, dragging: false
+    };
+}
+
+// --- Native Glow Helper ---
+function setGlow(clr, blurSize, target = drawingContext) {
+    target.shadowBlur = blurSize;
+    target.shadowColor = clr.toString();
+}
+
+function clearGlow(target = drawingContext) {
+    target.shadowBlur = 0;
+}
+
+function mod(n, m) { return ((n % m) + m) % m; }
+
+// --- Format Stopwatch Time ---
+function formatTime(t) {
+    let secs = floor(t);
+    let tenths = floor((t - secs) * 10);
+    return nf(secs, 2) + "." + tenths;
+}
+
+// --- Main Draw Loop ---
+function draw() {
+    let dt = 1 / 60; // Fixed timestep matching Pygame's tick(60)
+
+    // Calculate Reference Speed
+    let refSpeed = 0;
+    if (selectedRef === 0) refSpeed = platformSpeed;
+
+    // --- PHYSICS UPDATES ---
+    let shouldUpdate = !freezeMode || frameByFrame;
+
+    if (shouldUpdate) {
+        // Update Timers
+        timePlatform = (timePlatform + dt) % 100;
+        timeGround = (timeGround + dt) % 100;
+
+        // Update Stars
+        stars.forEach(s => { s.x += -refSpeed; });
+
+        // Update Platform
+        platform.x += (platformSpeed - refSpeed);
+
+        // Update Ground Stopwatch Position
+        stopwatchGroundX -= refSpeed;
+        if (stopwatchGroundX > WIDTH) stopwatchGroundX = 0;
+        if (stopwatchGroundX < 0) stopwatchGroundX = WIDTH;
+
+        // Update Photons
+        for (let i = photons.length - 1; i >= 0; i--) {
+            let p = photons[i];
+            
+            if (selectedRef === 0) {
+                p.x += p.vel; // Moves at C relative to platform
+            } else {
+                p.x += (p.vel - refSpeed); // Moves at C relative to ground
+            }
+
+            if (p.x < 0 || p.x > WIDTH) photons.splice(i, 1);
+        }
+
+        // Update Wavefronts
+        for (let i = wavefronts.length - 1; i >= 0; i--) {
+            let w = wavefronts[i];
+            w.lifeFrames += 1;
+            w.r = w.lifeFrames * C_SPEED; // Expands at C
+            if (w.r > max(WIDTH, HEIGHT) * 1.5) wavefronts.splice(i, 1);
+        }
+
+        // Re-arm button
+        if (photons.length === 0) {
+            yellowArmed = true;
+            buttons[1].active = false;
+        }
+
+        if (frameByFrame) frameByFrame = false;
+    }
+
+    // --- DRAWING ---
+    if (!trailMode) {
+        background(palette.bg);
+        trailGraphics.clear();
+    } else {
+        trailGraphics.noStroke();
+        trailGraphics.fill(0, 0, 0, 30); 
+        trailGraphics.rect(0, 0, WIDTH, HEIGHT);
+        image(trailGraphics, 0, 0);
+    }
+
+    let drawTarget = trailMode ? trailGraphics : window;
+
+    // Draw Stars
+    drawTarget.noStroke();
+    stars.forEach(s => {
+        drawTarget.fill(255);
+        drawTarget.circle(mod(s.x, WIDTH), s.y, s.r * 2);
+    });
+
+    // Draw Ground & Ruler
+    fill(palette.ground);
+    noStroke();
+    rect(0, GROUND_Y, WIDTH, HEIGHT - GROUND_Y);
+    
+    // Ruler
+    let rulerY = GROUND_Y + 20;
+    let rulerHeight = 20;
+    fill(palette.ruler);
+    rect(0, rulerY, WIDTH, rulerHeight);
+
+    stroke(255);
+    let minorInc = 16;
+    let majorInc = 160;
+    let groundOffset = selectedRef === 0 ? -platform.x : 0; 
+
+    for (let x = 0; x < WIDTH + majorInc; x += minorInc) {
+        let drawX = mod(x + groundOffset, WIDTH);
+        if (x % majorInc === 0) {
+            strokeWeight(2);
+            line(drawX, rulerY, drawX, rulerY + rulerHeight);
+        } else {
+            strokeWeight(1);
+            line(drawX, rulerY + rulerHeight/2, drawX, rulerY + rulerHeight);
+        }
+    }
+    noStroke();
+
+    // Draw Wavefronts
+    noFill();
+    strokeWeight(2);
+    wavefronts.forEach(w => {
+        stroke(100, 100, 255, 150);
+        circle(w.ox, w.oy, w.r * 2);
+    });
+
+    // Draw Platform
+    let pDrawX = mod(platform.x, WIDTH);
+    setGlow(palette.green, 15);
+    fill(0, 180, 50);
+    stroke(palette.green);
+    strokeWeight(2);
+    rect(pDrawX, platform.y, platform.w, platform.h, 4);
+    clearGlow();
+    noStroke();
+
+    // Draw Photons
+    photons.forEach(p => {
+        setGlow(palette.yellow, 15, drawTarget);
+        drawTarget.fill(palette.yellow);
+        drawTarget.noStroke();
+        drawTarget.circle(p.x, p.y, 14);
+        clearGlow(drawTarget);
+    });
+
+    // Draw Stopwatches
+    fill(255);
+    noStroke();
+    textAlign(CENTER, CENTER);
+    textSize(18);
+    textStyle(BOLD);
+    text(formatTime(timePlatform), pDrawX + platform.w / 2, platform.y - 15);
+    text(formatTime(timeGround), stopwatchGroundX, GROUND_Y - 20);
+
+    drawConsole();
+}
+
+function drawConsole() {
+    let cb = buttons.panel;
+    
+    // Panel Background
+    fill(palette.uiBg);
+    stroke(60);
+    strokeWeight(1);
+    rect(cb.x, cb.y, cb.w, cb.h, 12);
+    
+    // --- Slider UI ---
+    // Text Label above the slider line
+    fill(200);
+    noStroke();
+    textSize(13);
+    textAlign(CENTER, BOTTOM);
+    text("Platform Velocity (v): " + slider.val.toFixed(1), WIDTH / 2, slider.y + 20);
+
+    // Track
+    stroke(100);
+    strokeWeight(6);
+    line(slider.x, slider.y, slider.x + slider.w, slider.y);
+    
+    // Thumb
+    let thumbX = map(slider.val, slider.min, slider.max, slider.x, slider.x + slider.w);
+    setGlow(palette.green, 10);
+    fill(palette.green);
+    noStroke();
+    rect(thumbX - 5, slider.y - 8, 10, 16, 3);
+    clearGlow();
+
+    // --- Buttons UI ---
+    buttons.forEach(b => {
+        let active = false;
+        if (b.id === selectedRef && (b.id === 0 || b.id === 2)) active = true;
+        if (b.id === 3 && trailMode) active = true;
+        if (b.id === 4 && freezeMode) active = true;
+        if (b.id === 5 && !freezeMode) active = true;
+        if (b.id === 1 && !yellowArmed) active = true;
+
+        push();
+        translate(b.x, b.y);
+        
+        let c = active ? color(255) : b.c;
+        if (active && b.id !== 1) setGlow(b.c, 20);
+        if (b.id === 1 && yellowArmed) setGlow(b.c, 15);
+        
+        fill(c);
+        noStroke();
+        
+        if (b.id === 4) { // Pause icon
+            rect(-6, -8, 4, 16);
+            rect(2, -8, 4, 16);
+        } else if (b.id === 5) { // Play icon
+            triangle(-4, -9, 8, 0, -4, 9);
+        } else {
+            circle(0, 0, b.r * 2);
+            fill(0, 0, 0, 100);
+            circle(0, 0, b.r); 
+        }
+        
+        if (active && (b.id === 0 || b.id === 2)) {
+            noFill();
+            stroke(255);
+            strokeWeight(2);
+            circle(0, 0, b.r * 2.5);
+        }
+        clearGlow();
+
+        // Button Labels
+        fill(200);
+        noStroke();
+        textSize(10);
+        textStyle(NORMAL);
+        textAlign(CENTER, TOP);
+        text(b.label, 0, b.r + 5);
+
+        pop();
+    });
+}
+
+// --- Interactions ---
+function mousePressed() {
+    // Slider Drag Check (expanded hit area)
+    if (mouseX >= slider.x - 10 && mouseX <= slider.x + slider.w + 10 && mouseY >= slider.y - 15 && mouseY <= slider.y + 15) {
+        slider.dragging = true;
+        updateSlider(mouseX);
+        return;
+    }
+
+    // Button Clicks
+    buttons.forEach(b => {
+        if (dist(mouseX, mouseY, b.x, b.y) <= b.r) {
+            if (b.id === 0 || b.id === 2) selectedRef = b.id; // Switch Ref Frame
+            else if (b.id === 3) trailMode = !trailMode;      // Toggle Trails
+            else if (b.id === 4) { freezeMode = true; frameByFrame = true; } // Step
+            else if (b.id === 5) { freezeMode = false; frameByFrame = false; } // Play
+            else if (b.id === 1 && yellowArmed) { // Shoot Photons
+                let ox = mod(platform.x, WIDTH) + platform.w / 2;
+                let oy = platform.y - 30;
+                
+                photons.push({ x: ox, y: oy, vel: C_SPEED });  // Right
+                photons.push({ x: ox, y: oy, vel: -C_SPEED }); // Left
+                wavefronts.push({ ox: ox, oy: oy, r: 0, lifeFrames: 0 });
+                
+                yellowArmed = false;
+                buttons[1].active = true;
+            }
+        }
+    });
+}
+
+function mouseDragged() {
+    if (slider.dragging) updateSlider(mouseX);
+}
+
+function mouseReleased() {
+    slider.dragging = false;
+}
+
+function updateSlider(mx) {
+    let constrainedX = constrain(mx, slider.x, slider.x + slider.w);
+    platformSpeed = map(constrainedX, slider.x, slider.x + slider.w, slider.min, slider.max);
+    slider.val = platformSpeed; 
+}
+</script>
+</body>
+</html>

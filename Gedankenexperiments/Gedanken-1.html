@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gedankenexperiment 1</title>
+    <!-- Import p5.js Library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #05050a; /* Darker, space-like exterior */
+            font-family: sans-serif;
+            overflow: hidden; /* Prevent scrollbars */
+        }
+        canvas {
+            box-shadow: 0 0 40px rgba(150, 200, 255, 0.1), 0 0 10px rgba(0,0,0,1);
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+<script>
+// Increase or decrease this number to change how fast the shapes fall
+const GLOBAL_SPEED_MULTIPLIER = 1.0; 
+
+// Screen dimensions
+const WIDTH = 1000;
+const HEIGHT = 700;
+
+// Colors
+let DARK_GRAY, GRAY, BLACK, WHITE;
+let buttonColors = [];
+
+// Stars configuration
+const NUM_STARS = 250;
+let stars = [];
+
+// Button configuration
+const BUTTON_WIDTH = 80;
+const BUTTON_HEIGHT = 80;
+const BUTTON_MARGIN = 30;
+const buttonLabels = ["Circle", "Star", "Triangle", "Stick", "Diamond", "Stick Figure"];
+const buttonSymbols = ["ζ", "Ξ", "Ψ", "///", "ж", "≈"];
+let buttons = [];
+let buttonPressed = [0, 0, 0, 0, 0, 0];
+
+// Blinder configuration
+let blinderButton, closeBlinderButton;
+let blinderButtonPressed = 0;
+let viewStripY, viewStripHeight;
+let blindersEnabled = true;
+let blinderAnimation = false;
+let blinderPosition = 1;
+let blinderSpeed = 0.04;
+
+// Password system
+let passwordActive = false;
+let currentPassword = "";
+const correctPassword = "1245";
+let passwordMessage = "";
+let passwordTimer = 0;
+
+// Falling shapes
+let shapes = [];
+
+function setup() {
+  createCanvas(WIDTH, HEIGHT);
+  
+  // Initialize Colors (Neon Palette)
+  BLACK = color(5, 5, 10);
+  WHITE = color(255);
+  
+  // Changed DARK_GRAY to be 100% opaque so shapes DO NOT bleed through
+  DARK_GRAY = color(20, 20, 25); 
+  
+  buttonColors = [
+    color(255, 60, 100),  // Neon Pink/Red
+    color(255, 220, 50),  // Neon Yellow
+    color(50, 255, 100),  // Neon Green
+    color(50, 150, 255),  // Neon Blue
+    color(180, 80, 255),  // Neon Purple
+    color(0, 255, 255)    // Neon Cyan
+  ];
+
+  // Initialize Stars with subtle colors
+  for (let i = 0; i < NUM_STARS; i++) {
+    stars.push({
+      x: random(WIDTH),
+      y: random(HEIGHT),
+      brightness: random(100, 255),
+      size: random(0.5, 2.5),
+      twinkleSpeed: random(0.01, 0.05),
+      twinkleOffset: random(TWO_PI),
+      tint: random(buttonColors)
+    });
+  }
+
+  // Create Shape Buttons
+  for (let i = 0; i < buttonLabels.length; i++) {
+    let bx = WIDTH - BUTTON_WIDTH - BUTTON_MARGIN;
+    let by = BUTTON_MARGIN + i * (BUTTON_HEIGHT + BUTTON_MARGIN);
+    buttons.push({ x: bx, y: by, w: BUTTON_WIDTH, h: BUTTON_HEIGHT });
+  }
+
+  // Create Blinder Buttons
+  blinderButton = { x: BUTTON_MARGIN, y: BUTTON_MARGIN, w: BUTTON_WIDTH, h: BUTTON_HEIGHT };
+  closeBlinderButton = { x: BUTTON_MARGIN, y: HEIGHT - BUTTON_HEIGHT - BUTTON_MARGIN, w: BUTTON_WIDTH, h: BUTTON_HEIGHT };
+
+  viewStripY = HEIGHT / 2;
+  viewStripHeight = 4; // Slightly thicker glowing slit
+  
+  textAlign(CENTER, CENTER);
+}
+
+// Helper for native Canvas glow
+function setGlow(clr, blurSize) {
+  drawingContext.shadowBlur = blurSize;
+  drawingContext.shadowColor = clr.toString();
+}
+
+function clearGlow() {
+  drawingContext.shadowBlur = 0;
+}
+
+function drawGradientBackground() {
+  let c1 = color(10, 5, 30);
+  let c2 = color(2, 2, 5);
+  for (let y = 0; y <= HEIGHT; y++) {
+    let inter = map(y, 0, HEIGHT, 0, 1);
+    let c = lerpColor(c1, c2, inter);
+    stroke(c);
+    line(0, y, WIDTH, y);
+  }
+}
+
+function draw() {
+  blendMode(BLEND);
+  drawGradientBackground();
+  
+  let currentTime = millis() / 1000;
+
+  // 1. Update and Draw Stars (Additive Blending)
+  blendMode(ADD);
+  noStroke();
+  for (let star of stars) {
+    let twinkle = sin(currentTime * star.twinkleSpeed + star.twinkleOffset);
+    let starAlpha = star.brightness * (0.6 + 0.4 * twinkle);
+    
+    setGlow(star.tint, 5);
+    fill(red(star.tint), green(star.tint), blue(star.tint), starAlpha * 0.8);
+    circle(star.x, star.y, star.size * 2);
+  }
+  clearGlow();
+
+  // 2. Update and Draw Shapes
+  for (let i = shapes.length - 1; i >= 0; i--) {
+    let s = shapes[i];
+    s.update();
+    s.draw();
+    if (s.y > HEIGHT + 150) {
+      shapes.splice(i, 1);
+    }
+  }
+
+  blendMode(BLEND); // Return to normal blending for UI and Blinders
+
+  // 3. Update Animations & Timers
+  for (let i = 0; i < buttonPressed.length; i++) {
+    if (buttonPressed[i] > 0) buttonPressed[i]--;
+  }
+  if (blinderButtonPressed > 0) blinderButtonPressed--;
+  if (passwordTimer > 0) {
+    passwordTimer--;
+    if (passwordTimer === 0) passwordMessage = "";
+  }
+
+  // Blinder Animation Logic
+  if (blinderAnimation) {
+    if (blindersEnabled && blinderPosition > 0) {
+      blinderPosition -= blinderSpeed;
+      if (blinderPosition <= 0) {
+        blinderPosition = 0;
+        blinderAnimation = false;
+        blindersEnabled = false;
+      }
+    } else if (!blindersEnabled && blinderPosition < 1) {
+      blinderPosition += blinderSpeed;
+      if (blinderPosition >= 1) {
+        blinderPosition = 1;
+        blinderAnimation = false;
+        blindersEnabled = true;
+      }
+    }
+  }
+
+  // 4. Draw Blinders
+  if (blindersEnabled || blinderAnimation) {
+    let upperHeight = (viewStripY - viewStripHeight / 2) * blinderPosition;
+    let lowerStart = HEIGHT - (HEIGHT - viewStripY - viewStripHeight / 2) * blinderPosition;
+
+    noStroke();
+    fill(DARK_GRAY); // 100% opaque dark screen
+    
+    // Draw the top and bottom solid blinder plates
+    rect(0, 0, WIDTH, upperHeight);
+    rect(0, lowerStart, WIDTH, HEIGHT - lowerStart);
+
+    // The Glowing Slit Edge
+    if (blinderPosition > 0) {
+      blendMode(ADD);
+      setGlow(color(150, 200, 255), 15);
+      fill(200, 230, 255, 150 * blinderPosition);
+      rect(0, upperHeight - 2, WIDTH, 2);
+      rect(0, lowerStart, WIDTH, 2);
+      clearGlow();
+      blendMode(BLEND);
+    }
+  }
+
+  // 5. Draw UI Buttons
+  for (let i = 0; i < buttons.length; i++) {
+    let b = buttons[i];
+    let bColor = buttonColors[i];
+    let pressLevel = buttonPressed[i];
+    
+    let darkness = 0.5 + (pressLevel / 30);
+    
+    if (pressLevel > 0) {
+      fill(red(DARK_GRAY), green(DARK_GRAY), blue(DARK_GRAY));
+      stroke(red(bColor) * darkness, green(bColor) * darkness, blue(bColor) * darkness);
+    } else {
+      fill(DARK_GRAY);
+      stroke(bColor);
+    }
+    
+    // Button outer glow
+    setGlow(bColor, 15);
+    strokeWeight(2);
+    rect(b.x, b.y, b.w, b.h, 15);
+    clearGlow();
+    
+    // Draw Symbol
+    noStroke();
+    fill(bColor);
+    setGlow(bColor, 10);
+    textSize(38);
+    textStyle(BOLD);
+    text(buttonSymbols[i], b.x + b.w / 2, b.y + b.h / 2 + 2);
+    clearGlow();
+  }
+
+  // Draw Blinder Buttons
+  drawAccessButton(blinderButton, color(100, 200, 255), "t͡ʰ", blinderButtonPressed);
+  if (!blindersEnabled) {
+    drawAccessButton(closeBlinderButton, color(255, 100, 100), "t͡ɕʰ", blinderButtonPressed);
+  }
+
+  // 6. Draw Password Entry
+  if (passwordActive) {
+    fill(DARK_GRAY);
+    stroke(150, 200, 255);
+    strokeWeight(2);
+    setGlow(color(150, 200, 255), 20);
+    rect(WIDTH / 2 - 120, HEIGHT / 2 - 60, 240, 120, 15);
+    clearGlow();
+
+    noStroke();
+    fill(WHITE);
+    textSize(18);
+    textStyle(NORMAL);
+    setGlow(WHITE, 10);
+    text("ζ)(жζ<^ΞΨ… ж ≈ζΞ Ψ≈:", WIDTH / 2, HEIGHT / 2 - 30);
+    clearGlow();
+
+    fill(150, 200, 255);
+    textSize(40);
+    setGlow(color(150, 200, 255), 15);
+    let passDisplay = "•".repeat(currentPassword.length);
+    text(passDisplay, WIDTH / 2, HEIGHT / 2 + 15);
+    clearGlow();
+
+    if (passwordMessage) {
+      fill(255, 80, 80);
+      textSize(16);
+      textStyle(ITALIC);
+      setGlow(color(255, 80, 80), 10);
+      text(passwordMessage.toUpperCase(), WIDTH / 2, HEIGHT / 2 + 45);
+      clearGlow();
+    }
+  }
+}
+
+function drawAccessButton(btn, col, symbol, pressed) {
+  let darkness = pressed > 0 ? 0.5 + (pressed / 30) : 1;
+  
+  if (pressed > 0) {
+    fill(red(DARK_GRAY), green(DARK_GRAY), blue(DARK_GRAY));
+    stroke(red(col) * darkness, green(col) * darkness, blue(col) * darkness);
+  } else {
+    fill(DARK_GRAY);
+    stroke(col);
+  }
+  
+  setGlow(col, 15);
+  strokeWeight(2);
+  rect(btn.x, btn.y, btn.w, btn.h, 15);
+  clearGlow();
+
+  noStroke();
+  fill(col);
+  setGlow(col, 10);
+  textSize(40);
+  textStyle(BOLD);
+  text(symbol, btn.x + btn.w / 2, btn.y + btn.h / 2);
+  clearGlow();
+}
+
+// Event Handlers
+function mousePressed() {
+  for (let i = 0; i < buttons.length; i++) {
+    let b = buttons[i];
+    if (mouseX >= b.x && mouseX <= b.x + b.w && mouseY >= b.y && mouseY <= b.y + b.h) {
+      shapes.push(new Shape(buttonLabels[i], buttonColors[i]));
+      buttonPressed[i] = 15;
+    }
+  }
+
+  if (mouseX >= blinderButton.x && mouseX <= blinderButton.x + blinderButton.w &&
+      mouseY >= blinderButton.y && mouseY <= blinderButton.y + blinderButton.h) {
+    blinderButtonPressed = 15;
+    if (blindersEnabled) {
+      passwordActive = true;
+      currentPassword = "";
+      passwordMessage = "";
+    }
+  }
+
+  if (!blindersEnabled && 
+      mouseX >= closeBlinderButton.x && mouseX <= closeBlinderButton.x + closeBlinderButton.w &&
+      mouseY >= closeBlinderButton.y && mouseY <= closeBlinderButton.y + closeBlinderButton.h) {
+    if (!blinderAnimation) {
+      blinderAnimation = true;
+      blinderButtonPressed = 15;
+    }
+  }
+}
+
+function keyPressed() {
+  if (passwordActive) {
+    if (keyCode === RETURN || keyCode === ENTER) {
+      if (currentPassword === correctPassword) {
+        passwordActive = false;
+        if (!blinderAnimation) blinderAnimation = true;
+        passwordMessage = "";
+      } else {
+        passwordMessage = "access denied";
+        passwordTimer = 90;
+      }
+      currentPassword = "";
+    } else if (keyCode === BACKSPACE) {
+      currentPassword = currentPassword.slice(0, -1);
+    } else if (key >= '0' && key <= '9') {
+      if (currentPassword.length < 4) currentPassword += key;
+    }
+  }
+}
+
+// Shape Class
+class Shape {
+  constructor(type, colorObj) {
+    this.type = type;
+    this.color = colorObj;
+    this.x = random(WIDTH / 4, (3 * WIDTH) / 4);
+    this.y = -50;
+    
+    // Fall speed incorporates the global multiplier here
+    this.speed = random(3, 6) * GLOBAL_SPEED_MULTIPLIER;
+    
+    this.size = random(25, 45); 
+    this.glowIntensity = random(PI); // Offset for pulsing
+    this.angle = random(TWO_PI);
+    this.rotationSpeed = random(-2, 2) * 0.03;
+
+    if (this.type === "Stick Figure") {
+      this.headRadius = this.size / 3.5;
+      this.bodyLength = this.size * 1.8;
+      this.armLength = this.size * 1.2;
+      this.legLength = this.size * 1.3;
+      this.armYOffset = this.size / 1.8;
+    }
+  }
+
+  update() {
+    this.y += this.speed;
+    this.angle += this.rotationSpeed;
+    this.glowIntensity += 0.05;
+  }
+
+  draw() {
+    let r = red(this.color);
+    let g = green(this.color);
+    let b = blue(this.color);
+
+    push();
+    translate(this.x, this.y);
+    rotate(this.angle);
+
+    let pulse = (sin(this.glowIntensity) + 1) / 2; // 0 to 1
+    let currentGlow = map(pulse, 0, 1, 15, 40);
+
+    // Apply native canvas glow
+    setGlow(this.color, currentGlow);
+    fill(r, g, b, 255);
+    noStroke();
+    
+    // Line-based shapes need stroke logic
+    if (this.type === "Stick Figure" || this.type === "Stick") {
+      stroke(r, g, b, 255);
+      strokeWeight(max(3, this.size / 4));
+      strokeCap(ROUND);
+      noFill();
+    }
+    
+    this.drawShapeRaw(this.size);
+    clearGlow(); // Remove glow for the inner core
+    
+    // Draw inner white core for extra neon effect
+    if (this.type !== "Stick Figure" && this.type !== "Stick") {
+      fill(255, 255, 255, 150);
+      this.drawShapeRaw(this.size * 0.4);
+    }
+    
+    pop();
+  }
+
+  drawShapeRaw(s) {
+    if (this.type === "Circle") {
+      circle(0, 0, s * 2);
+    } else if (this.type === "Star") {
+      beginShape();
+      for (let i = 0; i < 10; i++) {
+        let a = i * TWO_PI / 10;
+        let rad = i % 2 === 0 ? s : s / 2.5;
+        vertex(rad * cos(a), rad * sin(a));
+      }
+      endShape(CLOSE);
+    } else if (this.type === "Triangle") {
+      beginShape();
+      for (let i = 0; i < 3; i++) {
+        let a = i * TWO_PI / 3 - HALF_PI;
+        vertex(s * cos(a), s * sin(a));
+      }
+      endShape(CLOSE);
+    } else if (this.type === "Diamond") {
+      beginShape();
+      for (let i = 0; i < 4; i++) {
+        let a = i * HALF_PI;
+        vertex(s * cos(a), s * sin(a));
+      }
+      endShape(CLOSE);
+    } else if (this.type === "Stick") {
+      let hLength = s;
+      line(-hLength, 0, hLength, 0);
+    } else if (this.type === "Stick Figure") {
+      let headTop = -s - this.headRadius;
+      let bodyTop = -s;
+      let bodyBottom = s;
+      
+      circle(0, headTop, this.headRadius * 2);
+      line(0, bodyTop, 0, bodyBottom);
+      line(-this.armLength, -s + this.armYOffset, this.armLength, -s + this.armYOffset);
+      line(0, bodyBottom, -this.legLength / 1.5, bodyBottom + this.legLength);
+      line(0, bodyBottom, this.legLength / 1.5, bodyBottom + this.legLength);
+    }
+  }
+}
+</script>
+</body>
+</html>

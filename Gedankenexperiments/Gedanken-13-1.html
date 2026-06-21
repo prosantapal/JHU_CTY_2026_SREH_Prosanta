@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Measuring Moving Sticks</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #030305;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+            color: white;
+            user-select: none;
+        }
+        canvas {
+            box-shadow: 0 0 50px rgba(0, 0, 0, 1);
+            border-radius: 8px;
+        }
+    </style>
+</head>
+<body>
+<script>
+// --- Constants & Globals ---
+const WIDTH = 1000;
+const HEIGHT = 600;
+
+// Physics Constants
+const C = 5000.0; // "Speed of light" in px/s
+const STICK_WIDTH = 12;
+
+// Stick Lengths (Shortest to longest)
+const HORIZONTAL_LENGTHS = [80, 165, 300, 605];
+const VERTICAL_LENGTHS = [60, 180, 295, 400];
+
+// Speeds (px/s), slowest to fastest
+const SPEEDS = [100, 700, 2200, 4400]; 
+const SPEED_FRACS = SPEEDS.map(v => v / C);
+
+// State Variables
+let isAnimating = false;
+let movingPos = { x: 0, y: HEIGHT / 2 };
+let currentStick = { idx: 0, dir: 'H' }; // dir: 'H' or 'V'
+let measuringLength = 200;
+let buttons = [];
+let palette;
+
+function setup() {
+    createCanvas(WIDTH, HEIGHT);
+    
+    palette = {
+        bg: color(5, 8, 12),
+        red: color(255, 50, 80),     // Measuring Stick
+        blue: color(50, 150, 255),   // Moving Stick
+        white: color(255),
+        gray: color(180),
+        uiBg: color(20, 25, 30, 200),
+        btnBg: color(40, 45, 50),
+        btnActive: color(100, 110, 120)
+    };
+
+    setupUI();
+}
+
+function setupUI() {
+    let btnW = 90;
+    let btnH = 42;
+    let margin = 16;
+    let startX = 110;
+    let startY = HEIGHT - btnH * 2 - margin * 2 - 30;
+
+    // Horizontal Buttons
+    for (let i = 0; i < 4; i++) {
+        buttons.push({
+            idx: i, dir: 'H',
+            x: startX + i * (btnW + margin),
+            y: startY,
+            w: btnW, h: btnH,
+            label: `${i + 1}-H`
+        });
+    }
+
+    // Vertical Buttons
+    for (let i = 0; i < 4; i++) {
+        buttons.push({
+            idx: i, dir: 'V',
+            x: startX + i * (btnW + margin),
+            y: startY + btnH + margin,
+            w: btnW, h: btnH,
+            label: `${i + 1}-V`
+        });
+    }
+}
+
+// --- Native Glow Helper ---
+function setGlow(clr, blurSize) {
+    drawingContext.shadowBlur = blurSize;
+    drawingContext.shadowColor = clr.toString();
+}
+
+function clearGlow() {
+    drawingContext.shadowBlur = 0;
+}
+
+// --- Physics Logic ---
+function getOriginalLength() {
+    return currentStick.dir === 'H' 
+        ? HORIZONTAL_LENGTHS[currentStick.idx] 
+        : VERTICAL_LENGTHS[currentStick.idx];
+}
+
+function getContractedLength() {
+    let vFrac = SPEED_FRACS[currentStick.idx];
+    let origLen = getOriginalLength();
+    
+    // Lorentz Contraction only happens parallel to the direction of motion
+    if (currentStick.dir === 'H' && vFrac > 0) {
+        let gamma = 1.0 / sqrt(1 - vFrac * vFrac);
+        return origLen / gamma;
+    }
+    return origLen; // Vertical length doesn't contract when moving horizontally
+}
+
+function launchStick(idx, dir) {
+    isAnimating = true;
+    currentStick = { idx: idx, dir: dir };
+    
+    let contracted = getContractedLength();
+    
+    // Start just off the left edge
+    if (dir === 'H') {
+        movingPos = { x: -contracted / 2, y: HEIGHT / 2 };
+    } else {
+        movingPos = { x: -STICK_WIDTH / 2, y: HEIGHT / 2 };
+    }
+}
+
+// --- Main Draw Loop ---
+function draw() {
+    background(palette.bg);
+    let dt = deltaTime / 1000.0;
+
+    // Handle Input for Measuring Stick
+    if (keyIsDown(LEFT_ARROW)) {
+        measuringLength = max(measuringLength - 250 * dt, 40);
+    }
+    if (keyIsDown(RIGHT_ARROW)) {
+        measuringLength = min(measuringLength + 250 * dt, 600);
+    }
+
+    // Handle Animation Update
+    if (isAnimating) {
+        let v = SPEEDS[currentStick.idx];
+        movingPos.x += v * dt;
+        
+        let stickLen = currentStick.dir === 'H' ? getContractedLength() : STICK_WIDTH;
+        
+        // Stop animation when it goes completely off the right edge
+        if (movingPos.x - stickLen / 2 > WIDTH) {
+            isAnimating = false;
+        }
+    }
+
+    // Draw Elements
+    drawSticks();
+    drawUI();
+}
+
+function drawSticks() {
+    rectMode(CENTER);
+
+    // 1. Draw Stationary Measuring Stick (Red)
+    let mCenterX = WIDTH / 2 + 120;
+    let mCenterY = HEIGHT / 2;
+    let isHorizontal = currentStick.dir === 'H';
+
+    setGlow(palette.red, 20);
+    fill(red(palette.red), green(palette.red), blue(palette.red), 200); // Slight transparency
+    stroke(palette.white);
+    strokeWeight(2);
+    
+    if (isHorizontal) {
+        rect(mCenterX, mCenterY, measuringLength, STICK_WIDTH, 4);
+    } else {
+        rect(mCenterX, mCenterY, STICK_WIDTH, measuringLength, 4);
+    }
+    clearGlow();
+
+    // 2. Draw Moving Stick (Blue)
+    if (isAnimating) {
+        setGlow(palette.blue, 20);
+        fill(red(palette.blue), green(palette.blue), blue(palette.blue), 200);
+        stroke(palette.white);
+        strokeWeight(2);
+
+        if (currentStick.dir === 'H') {
+            rect(movingPos.x, movingPos.y, getContractedLength(), STICK_WIDTH, 4);
+        } else {
+            rect(movingPos.x, movingPos.y, STICK_WIDTH, VERTICAL_LENGTHS[currentStick.idx], 4);
+        }
+        clearGlow();
+    }
+}
+
+function drawUI() {
+    // HUD Instructions
+    fill(palette.white);
+    noStroke();
+    textAlign(LEFT, TOP);
+    textSize(16);
+    textStyle(BOLD);
+    
+    textSize(14);
+    textStyle(NORMAL);
+    fill(200);
+    text("1. Click a button to launch a test object.", 110, 45);
+    text("2. Hold [LEFT/RIGHT] arrows to adjust your red measuring stick.", 110, 65);
+    text("3. Try to perfectly match the length of the moving blue object!", 110, 85);
+    text("4. Press [R] to stop and reset.", 110, 105);
+
+    // Legend
+    rectMode(CORNER);
+    
+    setGlow(palette.red, 10);
+    fill(palette.red);
+    rect(110, 135, 15, 15, 3);
+    clearGlow();
+    fill(palette.white);
+    text("Stationary Observer (You)", 135, 135);
+
+    setGlow(palette.blue, 10);
+    fill(palette.blue);
+    rect(110, 160, 15, 15, 3);
+    clearGlow();
+    fill(palette.white);
+    text("Moving Object (Relativistic)", 135, 160);
+
+    // Real-time Measurement Readout
+    textAlign(RIGHT, TOP);
+    textSize(24);
+    textStyle(BOLD);
+    fill(palette.red);
+    text(`Measuring Stick: ${measuringLength.toFixed(0)} px`, WIDTH - 50, 30);
+
+    // Physics Data Readout (If animating)
+    if (isAnimating) {
+        let vFrac = SPEED_FRACS[currentStick.idx];
+        let gamma = 1.0 / sqrt(1 - vFrac * vFrac);
+        
+        textSize(16);
+        fill(palette.blue);
+        text(`Velocity (v): ${(vFrac).toFixed(2)}c`, WIDTH - 50, 65);
+        text(`Lorentz Factor (γ): ${gamma.toFixed(3)}`, WIDTH - 50, 85);
+    }
+
+    // Draw Buttons
+    rectMode(CORNER);
+    for (let b of buttons) {
+        let isSelected = isAnimating && currentStick.idx === b.idx && currentStick.dir === b.dir;
+        
+        if (isSelected) {
+            fill(palette.btnActive);
+            stroke(palette.white);
+            strokeWeight(2);
+            setGlow(palette.white, 10);
+        } else {
+            fill(palette.btnBg);
+            stroke(80);
+            strokeWeight(1);
+            clearGlow();
+        }
+
+        rect(b.x, b.y, b.w, b.h, 6);
+        clearGlow();
+
+        fill(palette.white);
+        noStroke();
+        textAlign(CENTER, CENTER);
+        textSize(16);
+        textStyle(BOLD);
+        text(b.label, b.x + b.w / 2, b.y + b.h / 2);
+    }
+}
+
+// --- Interactions ---
+function mousePressed() {
+    for (let b of buttons) {
+        if (mouseX > b.x && mouseX < b.x + b.w && mouseY > b.y && mouseY < b.y + b.h) {
+            launchStick(b.idx, b.dir);
+            break;
+        }
+    }
+}
+
+function keyPressed() {
+    if (key.toLowerCase() === 'r') {
+        isAnimating = false;
+    }
+}
+</script>
+</body>
+</html>

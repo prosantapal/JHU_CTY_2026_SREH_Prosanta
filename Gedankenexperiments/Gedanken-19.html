@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Newton vs Mach</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.6.0/p5.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #121212;
+            color: #ffffff;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        h2 { margin-top: 0; margin-bottom: 15px;}
+        #ui-container {
+            display: flex;
+            gap: 30px;
+            margin-bottom: 15px;
+            background: #1e1e1e;
+            padding: 20px 30px;
+            border-radius: 8px;
+            border: 1px solid #333;
+            align-items: center;
+            width: 800px;
+            box-sizing: border-box;
+            justify-content: space-between;
+        }
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            width: 30%;
+        }
+        .radio-group {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            background: #2a2a2a;
+            padding: 15px;
+            border-radius: 5px;
+            border: 1px solid #555;
+        }
+        .radio-group label {
+            cursor: pointer;
+            font-weight: bold;
+        }
+        input[type="range"] {
+            width: 100%;
+            margin-top: 5px;
+        }
+        canvas {
+            border-radius: 8px;
+            box-shadow: 0 8px 25px rgba(0,0,0,0.8);
+        }
+        #explanation {
+            margin-top: 15px;
+            width: 800px;
+            background: #1a271d;
+            border: 2px solid #2e4433;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+            font-size: 16px;
+            line-height: 1.5;
+        }
+        .highlight {
+            color: #4CAF50;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+    <h2>Newton vs Mach</h2>
+    
+    <div id="ui-container">
+        <div class="radio-group">
+            <label>
+                <input type="radio" name="physicsMode" value="newton" checked>
+                Newton (Absolute Space)
+            </label>
+            <label>
+                <input type="radio" name="physicsMode" value="mach">
+                Mach (Relational Space)
+            </label>
+        </div>
+
+        <div class="control-group">
+            <label for="bucketSlider" style="color: #448aff; font-weight: bold;">Bucket Spin Speed: <span id="bucketDisplay">0</span></label>
+            <input type="range" id="bucketSlider" min="0" max="5" value="0" step="0.1">
+        </div>
+
+        <div class="control-group">
+            <label for="universeSlider" style="color: #ffeb3b; font-weight: bold;">Universe Spin Speed: <span id="universeDisplay">0</span></label>
+            <input type="range" id="universeSlider" min="0" max="5" value="0" step="0.1">
+        </div>
+    </div>
+
+    <div id="canvas-container"></div>
+    
+    <div id="explanation">
+        <span id="exp-text">Change the sliders to see how the water reacts!</span>
+    </div>
+
+<script>
+    // --- STATE VARIABLES ---
+    let omegaBucket = 0;
+    let omegaUniverse = 0;
+    let mode = 'newton';
+    let stars = [];
+    let universeAngle = 0;
+    let bucketAngle = 0;
+
+    // --- UI ELEMENTS ---
+    let bucketSlider, universeSlider, radios;
+
+    function setup() {
+        let canvas = createCanvas(800, 450);
+        canvas.parent('canvas-container');
+
+        // Hook up UI
+        bucketSlider = document.getElementById('bucketSlider');
+        universeSlider = document.getElementById('universeSlider');
+        radios = document.getElementsByName('physicsMode');
+
+        bucketSlider.addEventListener('input', updateState);
+        universeSlider.addEventListener('input', updateState);
+        for (let r of radios) {
+            r.addEventListener('change', updateState);
+        }
+
+        // Generate Starfield Background
+        for (let i = 0; i < 300; i++) {
+            let r = random(50, 600);
+            let theta = random(TWO_PI);
+            stars.push({r: r, theta: theta, size: random(1, 3)});
+        }
+
+        updateState();
+    }
+
+    function updateState() {
+        omegaBucket = parseFloat(bucketSlider.value);
+        omegaUniverse = parseFloat(universeSlider.value);
+        document.getElementById('bucketDisplay').innerText = omegaBucket.toFixed(1);
+        document.getElementById('universeDisplay').innerText = omegaUniverse.toFixed(1);
+
+        for (let r of radios) {
+            if (r.checked) mode = r.value;
+        }
+
+        updateExplanation();
+    }
+
+    function updateExplanation() {
+        let text = "";
+        let effectiveOmega = 0;
+
+        if (mode === 'newton') {
+            effectiveOmega = omegaBucket;
+            if (omegaBucket === 0) {
+                text = "The bucket is stationary relative to <span class='highlight'>Absolute Space</span>. The water is flat.";
+            } else {
+                text = "The water curves because it is spinning relative to the invisible grid of <span class='highlight'>Absolute Space</span>. The distant stars do not matter.";
+            }
+        } else {
+            effectiveOmega = Math.abs(omegaBucket - omegaUniverse);
+            if (effectiveOmega === 0) {
+                text = "There is <span class='highlight'>no relative motion</span> between the bucket and the universe. Inertia vanishes. The water is flat!";
+            } else if (omegaBucket === 0 && omegaUniverse > 0) {
+                text = "The bucket is still, but the universe is spinning around it! <span class='highlight'>Frame-dragging</span> from the stars pulls the water up the walls!";
+            } else {
+                text = "The water curves purely based on its <span class='highlight'>relative speed</span> compared to the rest of the matter in the universe.";
+            }
+        }
+
+        document.getElementById('exp-text').innerHTML = text;
+    }
+
+    function draw() {
+        background(10, 10, 15);
+
+        // 1. Draw Universe (Rotating Starfield)
+        universeAngle += omegaUniverse * 0.01;
+        push();
+        translate(width / 2, height / 2 - 20);
+        rotate(universeAngle);
+        noStroke();
+        fill(255, 255, 200, 180);
+        for (let s of stars) {
+            let sx = s.r * cos(s.theta);
+            let sy = s.r * sin(s.theta);
+            ellipse(sx, sy, s.size);
+        }
+        pop();
+
+        // 2. Calculate Water Curvature
+        let effectiveOmega = 0;
+        if (mode === 'newton') {
+            effectiveOmega = omegaBucket; // Newton only cares about absolute bucket speed
+        } else {
+            effectiveOmega = omegaBucket - omegaUniverse; // Mach cares about relative difference
+        }
+
+        // Parabola math: y = k * x^2
+        // Max omega is 5. We want max depth to be about 80 pixels.
+        // x goes from -100 to 100 (bucket width is 200).
+        // 80 = k * (100^2) => k = 80 / 10000 = 0.008
+        let k = 0.008 * Math.pow(effectiveOmega / 5.0, 2);
+
+        let bucketW = 200;
+        let bucketH = 200;
+        let cx = width / 2;
+        let cy = height / 2 + 50; // Bottom of bucket
+        
+        let waterBaseY = cy - 100; // Resting water level
+
+        // 3. Draw Water (Parabola)
+        noStroke();
+        fill(0, 150, 255, 200);
+        beginShape();
+        vertex(cx - bucketW/2, cy); // Bottom left
+        vertex(cx + bucketW/2, cy); // Bottom right
+        
+        // Draw parabolic surface
+        for (let x = bucketW/2; x >= -bucketW/2; x -= 5) {
+            let yOffset = k * (x * x);
+            // Drop the base level slightly as it curves up the walls to conserve volume
+            let volumeAdjustment = (k * (bucketW/2 * bucketW/2)) / 3; 
+            vertex(cx + x, waterBaseY - yOffset + volumeAdjustment);
+        }
+        endShape(CLOSE);
+
+        // 4. Draw Bucket Cross-Section
+        stroke(150);
+        strokeWeight(6);
+        noFill();
+        // Left wall, bottom, right wall
+        beginShape();
+        vertex(cx - bucketW/2, cy - bucketH);
+        vertex(cx - bucketW/2, cy);
+        vertex(cx + bucketW/2, cy);
+        vertex(cx + bucketW/2, cy - bucketH);
+        endShape();
+
+        // Visual indicator that the bucket is spinning (a rotating dashed line under the bucket)
+        bucketAngle += omegaBucket * 0.05;
+        push();
+        translate(cx, cy + 30);
+        rotate(bucketAngle);
+        stroke(68, 138, 255);
+        strokeWeight(4);
+        line(-30, 0, 30, 0);
+        noStroke();
+        fill(255);
+        ellipse(30, 0, 10);
+        pop();
+        
+        // HUD Labels
+        noStroke(); fill(255); textAlign(CENTER, TOP); textSize(14);
+        text("Spin Indicator", cx, cy + 45);
+    }
+</script>
+</body>
+</html>

@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gedankenexperiment 2: Aristotle's World</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #030308;
+            font-family: sans-serif;
+            overflow: hidden;
+        }
+        canvas {
+            box-shadow: 0 0 50px rgba(0, 0, 0, 1);
+            border-radius: 8px;
+        }
+    </style>
+</head>
+<body>
+<script>
+
+const GLOBAL_SPEED = 0.7; 
+
+let simFrame = 0;
+let simTime = 0;
+
+// --- Global Configurations ---
+const WIDTH = 800;
+const HEIGHT = 600;
+const GROUND_Y = (HEIGHT * 2) / 3;
+
+// Objects
+let stars = [];
+let explodingStars = [];
+let tree;
+let bonfire;
+let stickFigure;
+let celestialSystem;
+
+// Interactive Entities
+let greenBlock, dirt, rock, sun, feather;
+let fallingStar;
+
+// Colors
+let palette;
+
+function setup() {
+    createCanvas(WIDTH, HEIGHT);
+    
+    palette = {
+        black: color(5, 5, 12),
+        white: color(255, 255, 255),
+        green: color(50, 255, 100),
+        brown: color(139, 69, 19),
+        grey: color(150, 150, 160),
+        pink: color(255, 100, 180),
+        yellow: color(255, 220, 50),
+        ground: color(20, 25, 30)
+    };
+
+    // Initialize Stars
+    for (let i = 0; i < 70; i++) {
+        stars.push(new Star(random(WIDTH), random(HEIGHT)));
+    }
+    for (let i = 0; i < 3; i++) {
+        explodingStars.push(new ExplodingStar(random(WIDTH), random(HEIGHT)));
+    }
+
+    // Initialize Environment
+    tree = new Tree(WIDTH / 4, GROUND_Y);
+    bonfire = new Bonfire(WIDTH / 2 + 100, GROUND_Y - 5);
+    celestialSystem = new CelestialSystem();
+
+    // Initialize Actors
+    stickFigure = new StickFigure(WIDTH / 2, GROUND_Y, palette.pink);
+    
+    // green block (Violent Motion)
+    greenBlock = new Entity(100, GROUND_Y - 10, "violent", palette.green);
+    greenBlock.w = 113; greenBlock.h = 20;
+    
+    // dirt/rock (Heavy Natural Motion)
+    dirt = new Entity(WIDTH / 2 - 50, GROUND_Y - 10, "natural", palette.brown);
+    dirt.w = 20; dirt.h = 20;
+    
+    rock = new Entity(WIDTH / 2 + 50, GROUND_Y - 10, "natural", palette.grey);
+    rock.w = 25; rock.h = 25;
+    
+    // feather (Light Natural Motion)
+    feather = new Entity(WIDTH / 2 - 100, GROUND_Y - 10, "feather", palette.white);
+    
+    // sun (Celestial Motion)
+    sun = new Entity(WIDTH / 2, HEIGHT / 2, "celestial", palette.yellow);
+    
+    // falling star
+    fallingStar = new Entity(0, HEIGHT, "falling", palette.white);
+}
+
+// --- Native Canvas Glow Helper ---
+function setGlow(clr, blurSize) {
+    drawingContext.shadowBlur = blurSize;
+    drawingContext.shadowColor = clr.toString();
+}
+function clearGlow() {
+    drawingContext.shadowBlur = 0;
+}
+
+function draw() {
+    // Update our custom global time scale
+    simFrame += GLOBAL_SPEED;
+    simTime += deltaTime * GLOBAL_SPEED;
+
+    // Deep Space Background
+    background(palette.black);
+
+    // 1. Celestial Sphere (Additive Blending)
+    blendMode(ADD);
+    stars.forEach(s => s.updateAndDraw());
+    explodingStars.forEach(es => es.updateAndDraw());
+    fallingStar.updateAndDraw();
+    celestialSystem.updateAndDraw(sun.x, sun.y, 20);
+    blendMode(BLEND);
+
+    // 2. The Ground (Sublunary Sphere boundary)
+    noStroke();
+    fill(palette.ground);
+    rect(0, GROUND_Y, WIDTH, HEIGHT - GROUND_Y);
+    
+    // Ground subtle glow
+    stroke(50, 60, 70);
+    strokeWeight(1);
+    line(0, GROUND_Y, WIDTH, GROUND_Y);
+
+    // 3. Environment
+    tree.updateAndDraw();
+    sun.updateAndDraw();
+
+    blendMode(ADD);
+    bonfire.updateAndDraw();
+    blendMode(BLEND);
+
+    // 4. Earthly Entities
+    greenBlock.updateAndDraw();
+    dirt.updateAndDraw();
+    rock.updateAndDraw();
+    feather.updateAndDraw();
+
+    // 5. Stick Figure Logic & Collisions
+    stickFigure.updateAndDraw();
+    stickFigure.checkCollisions(greenBlock, dirt, rock, feather);
+}
+
+// --- Interaction / Controls ---
+function mousePressed() {
+    // Violent Motion Trigger
+    if (dist(mouseX, mouseY, greenBlock.x, greenBlock.y) < 60) {
+        greenBlock.vx = mouseX < greenBlock.x ? 7 : -7;
+        greenBlock.isMoving = true;
+    }
+    // Natural Motion Triggers
+    if (dist(mouseX, mouseY, dirt.x, dirt.y) < 30) {
+        dirt.vy = -7;
+    }
+    if (dist(mouseX, mouseY, rock.x, rock.y) < 30) {
+        rock.vy = -3.5;
+    }
+    if (dist(mouseX, mouseY, feather.x, feather.y) < 30) {
+        feather.vy = -3.0;
+        feather.vx = random(-0.5, 0.5);
+    }
+    // Self-Motion / Anima Trigger
+    stickFigure.reactToClick(mouseX, mouseY);
+}
+
+// --- Entity Classes ---
+
+class Entity {
+    constructor(x, y, motionType, col) {
+        this.x = x;
+        this.y = y;
+        this.initialY = y;
+        this.motionType = motionType;
+        this.color = col;
+        this.vx = 0;
+        this.vy = 0;
+        this.gravity = 0.2;
+        this.w = 10;
+        this.h = 10;
+        this.angle = 0; // for celestial
+        this.isMoving = false;
+    }
+
+    updateAndDraw() {
+        // Physics Updates scaled by GLOBAL_SPEED
+        if (this.motionType === "violent") {
+            this.x += this.vx * GLOBAL_SPEED;
+            if (this.vx > 0) this.vx = max(0, this.vx - 0.1 * GLOBAL_SPEED);
+            if (this.vx < 0) this.vx = min(0, this.vx + 0.1 * GLOBAL_SPEED);
+            
+            // Screen wrap
+            if (this.x > WIDTH + this.w / 2) this.x = -this.w / 2;
+            else if (this.x < -this.w / 2) this.x = WIDTH + this.w / 2;
+
+        } else if (this.motionType === "natural") {
+            this.vy += this.gravity * GLOBAL_SPEED;
+            this.y += this.vy * GLOBAL_SPEED;
+            if (this.y >= this.initialY) {
+                this.y = this.initialY;
+                this.vy = 0;
+            }
+        } else if (this.motionType === "feather") {
+            this.vy += 0.1 * GLOBAL_SPEED; // lower gravity
+            if (this.vy > 0) this.vy = min(this.vy, 0.5); // air resistance
+            this.x += (sin(simFrame * 0.05) * 0.5 + this.vx) * GLOBAL_SPEED; // sway
+            this.y += this.vy * GLOBAL_SPEED;
+            if (this.y >= this.initialY) {
+                this.y = this.initialY;
+                this.vy = 0;
+                this.vx = 0;
+            }
+        } else if (this.motionType === "celestial") {
+            this.angle += 0.005 * GLOBAL_SPEED;
+            let radiusX = WIDTH / 2 - 50;
+            let radiusY = HEIGHT / 3;
+            this.x = WIDTH / 2 + radiusX * cos(this.angle);
+            this.y = HEIGHT / 2 - radiusY * sin(this.angle);
+        } else if (this.motionType === "falling") {
+            this.x += 1 * GLOBAL_SPEED;
+            this.y -= 1 * GLOBAL_SPEED;
+            if (this.x > WIDTH || this.y < 0) {
+                this.x = 0; this.y = HEIGHT;
+            }
+        }
+
+        // Drawing
+        push();
+        translate(this.x, this.y);
+        setGlow(this.color, 15);
+        fill(this.color);
+        noStroke();
+
+        if (this.motionType === "violent" || this.motionType === "natural") {
+            rectMode(CENTER);
+            rect(0, 0, this.w, this.h, 2);
+        } else if (this.motionType === "celestial") {
+            circle(0, 0, 30);
+            fill(255);
+            circle(0, 0, 10);
+        } else if (this.motionType === "feather") {
+            stroke(255);
+            strokeWeight(2);
+            let sway = sin(simFrame * 0.1) * 0.2;
+            rotate(PI/4 + sway);
+            line(0, 0, 16, 0);
+            strokeWeight(1);
+            for(let i = 2; i < 14; i+=2) {
+                line(i, 0, i+4, -5);
+                line(i, 0, i+4, 5);
+            }
+        } else if (this.motionType === "falling") {
+            circle(0, 0, 4);
+        }
+        clearGlow();
+        pop();
+    }
+}
+
+class StickFigure {
+    constructor(x, y, col) {
+        this.x = x;
+        this.y = y;
+        this.color = col;
+        this.speed = 1.5;
+        this.dir = 1;
+        this.state = "walking"; // walking, avoiding, hidden
+        this.timer = 0;
+        this.colRadius = 15;
+    }
+
+    reactToClick(mx, my) {
+        if (this.state !== "hidden" && this.state !== "avoiding") {
+            if (abs(mx - this.x) < 150) {
+                if ((mx > this.x && this.dir === 1) || (mx < this.x && this.dir === -1)) {
+                    this.dir *= -1;
+                    this.state = "avoiding";
+                    this.timer = 20; 
+                    this.y -= 15;
+                }
+            }
+        }
+    }
+
+    checkCollisions(green, dirt, rock, feather) {
+        if (this.state === "hidden") return;
+
+        // Kick Green Block
+        if (abs(this.x - green.x) < this.colRadius + green.w/2 && abs(this.y - green.y) < 30) {
+            let pushDir = this.x < green.x ? 1 : -1;
+            green.vx = 4 * pushDir;
+        }
+        // Kick Dirt
+        if (dist(this.x, this.y, dirt.x, dirt.y) < this.colRadius + 15) {
+            dirt.vy = -5; dirt.gravity = 0.2;
+        }
+        // Kick Rock
+        if (dist(this.x, this.y, rock.x, rock.y) < this.colRadius + 15) {
+            rock.vy = -3.5; rock.gravity = 0.2;
+        }
+        // Swat Feather
+        if (dist(this.x, this.y, feather.x, feather.y) < this.colRadius + 15) {
+            feather.vy = -3.0;
+            feather.vx = (feather.x < this.x ? -1 : 1) * 1.5;
+        }
+    }
+
+    updateAndDraw() {
+        if (this.state === "hidden") {
+            this.timer -= GLOBAL_SPEED;
+            if (this.timer <= 0) {
+                this.state = "walking";
+                this.x = this.dir === 1 ? 0 : WIDTH;
+            }
+            return;
+        }
+
+        if (this.state === "avoiding") {
+            this.timer -= GLOBAL_SPEED;
+            if (this.timer <= 0) {
+                this.state = "walking";
+                this.y = GROUND_Y;
+            } else {
+                this.x += (this.speed * this.dir * 2) * GLOBAL_SPEED;
+            }
+        } else {
+            // Randomly turn around
+            if (floor(simFrame) % 300 === 0 && random() < 0.5 * GLOBAL_SPEED) this.dir *= -1;
+            this.x += (this.speed * this.dir) * GLOBAL_SPEED;
+        }
+
+        // Walk off screen
+        if ((this.x > WIDTH + 20 && this.dir === 1) || (this.x < -20 && this.dir === -1)) {
+            this.state = "hidden";
+            this.timer = floor(random(100, 300));
+        }
+
+        // Draw
+        push();
+        translate(this.x, this.y);
+        setGlow(this.color, 15);
+        stroke(this.color);
+        strokeWeight(3);
+        noFill();
+
+        // Body
+        line(0, -10, 0, -30);
+        // Head
+        circle(0, -35, 10);
+        
+        // Dynamic Legs
+        let swing = sin(simFrame * 0.15) * 10;
+        if (this.state === "avoiding") swing = 5; // Frozen mid-air
+        line(0, -10, -5 + swing, 10);
+        line(0, -10, 5 - swing, 10);
+        
+        // Arms
+        line(0, -25, -10 + swing, -15);
+        line(0, -25, 10 - swing, -15);
+
+        clearGlow();
+        pop();
+    }
+}
+
+class CelestialSystem {
+    constructor() {
+        this.radius = 30;
+    }
+    updateAndDraw(sunX, sunY, sunRad) {
+        let t = simTime / 1000;
+        let speed = WIDTH / 15; // Takes 15s (scaled by global speed) to traverse screen
+        let bx = WIDTH - (t * speed) % (WIDTH + 100);
+        let by = map(noise(t * 0.1), 0, 1, 50, HEIGHT - 200);
+
+        let angle = t * PI;
+        let wx = bx + cos(angle) * this.radius;
+        let wy = by + sin(angle) * this.radius;
+
+        if (dist(bx, by, sunX, sunY) > sunRad + 10) {
+            // Black Hole
+            setGlow(color(100, 0, 200), 20);
+            fill(0); stroke(150, 50, 255); strokeWeight(2);
+            circle(bx, by, 12);
+            
+            // White Sister Star
+            noStroke(); fill(255); setGlow(color(255), 20);
+            circle(wx, wy, 8);
+            clearGlow();
+        }
+    }
+}
+
+class Tree {
+    constructor(x, y) {
+        this.x = x; this.y = y;
+        this.w = 15; this.h = 50;
+        
+        this.colors = [
+            color(50, 255, 50),   // Spring
+            color(0, 150, 0),     // Summer
+            color(200, 100, 20),  // Autumn
+            color(220, 220, 230)  // Winter
+        ];
+    }
+    updateAndDraw() {
+        // Trunk
+        push();
+        translate(this.x, this.y);
+        fill(palette.brown);
+        noStroke();
+        rectMode(CENTER);
+        rect(0, -this.h/2, this.w, this.h);
+
+        // Foliage color cycling 
+        let yearPct = (simTime % 15000) / 15000;
+        let idx = floor(yearPct * 4);
+        let nextIdx = (idx + 1) % 4;
+        let localPct = (yearPct * 4) % 1;
+        let currentFoliage = lerpColor(this.colors[idx], this.colors[nextIdx], localPct);
+
+        setGlow(currentFoliage, 20);
+        fill(currentFoliage);
+        circle(0, -this.h - 10, 60);
+        circle(-20, -this.h, 40);
+        circle(20, -this.h, 40);
+        clearGlow();
+        pop();
+    }
+}
+
+class Bonfire {
+    constructor(x, y) {
+        this.x = x; this.y = y;
+        this.particles = [];
+        this.sparks = [];
+        this.particleTimer = 0;
+    }
+    updateAndDraw() {
+        // Base Logs
+        push();
+        translate(this.x, this.y);
+        fill(60, 30, 10);
+        rectMode(CENTER);
+        rotate(PI/6); rect(0, 0, 30, 8, 3);
+        rotate(-PI/3); rect(0, 0, 30, 8, 3);
+        pop();
+
+        // Spawning Particles scaled by time
+        this.particleTimer += GLOBAL_SPEED;
+        if (this.particleTimer >= 2) {
+            for(let i=0; i<3; i++) {
+                this.particles.push({
+                    x: this.x + random(-10, 10),
+                    y: this.y,
+                    vx: random(-0.5, 0.5),
+                    vy: random(-2, -0.5),
+                    life: 255,
+                    size: random(10, 20)
+                });
+            }
+            this.particleTimer = 0;
+        }
+        
+        // Spawning Sparks
+        if (random() < 0.1 * GLOBAL_SPEED) {
+            this.sparks.push({
+                x: this.x + random(-5, 5),
+                y: this.y - 10,
+                vx: random(-1, 1),
+                vy: random(-4, -2),
+                life: 255
+            });
+        }
+
+        // Draw Particles
+        noStroke();
+        for (let i = this.particles.length - 1; i >= 0; i--) {
+            let p = this.particles[i];
+            p.x += p.vx * GLOBAL_SPEED; 
+            p.y += p.vy * GLOBAL_SPEED;
+            p.life -= 8 * GLOBAL_SPEED; 
+            p.size *= (1 - 0.05 * GLOBAL_SPEED); // Smooth scaling
+            
+            if (p.life <= 0) { this.particles.splice(i, 1); continue; }
+            
+            fill(255, 100, 0, p.life);
+            setGlow(color(255, 50, 0), 20);
+            circle(p.x, p.y, p.size);
+        }
+
+        // Draw Sparks
+        for (let i = this.sparks.length - 1; i >= 0; i--) {
+            let s = this.sparks[i];
+            s.x += s.vx * GLOBAL_SPEED; 
+            s.y += s.vy * GLOBAL_SPEED;
+            s.life -= 4 * GLOBAL_SPEED;
+            
+            if (s.life <= 0) { this.sparks.splice(i, 1); continue; }
+            
+            fill(255, 200, 50, s.life);
+            setGlow(color(255, 200, 50), 10);
+            circle(s.x, s.y, 3);
+        }
+        clearGlow();
+    }
+}
+
+class Star {
+    constructor(x, y) {
+        this.x = x; this.y = y;
+        this.size = random(1, 3);
+        this.offset = random(TWO_PI);
+    }
+    updateAndDraw() {
+        let alpha = map(sin(simFrame * 0.05 + this.offset), -1, 1, 100, 255);
+        fill(255, 255, 255, alpha);
+        noStroke();
+        circle(this.x, this.y, this.size);
+    }
+}
+
+class ExplodingStar {
+    constructor(x, y) {
+        this.x = x; this.y = y;
+        this.timer = random(300, 1500);
+        this.radius = 0.5;
+        this.exploding = false;
+    }
+    updateAndDraw() {
+        if (!this.exploding) {
+            this.timer -= GLOBAL_SPEED;
+            if (this.timer <= 0) this.exploding = true;
+            fill(255); noStroke(); circle(this.x, this.y, 2);
+        } else {
+            this.radius += 1 * GLOBAL_SPEED;
+            let alpha = map(this.radius, 0, 50, 255, 0);
+            if (alpha <= 0) {
+                // Reset
+                this.x = random(WIDTH); this.y = random(HEIGHT/2);
+                this.timer = random(500, 2000);
+                this.radius = 1;
+                this.exploding = false;
+            } else {
+                fill(255, 200, 100, alpha);
+                setGlow(color(255, 150, 50), 20);
+                noStroke();
+                circle(this.x, this.y, this.radius * 2);
+                clearGlow();
+            }
+        }
+    }
+}
+</script>
+</body>
+</html>

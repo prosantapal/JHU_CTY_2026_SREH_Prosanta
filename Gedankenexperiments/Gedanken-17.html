@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Relativistic Photon Rocket</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.6.0/p5.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #121212;
+            color: #ffffff;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        #ui-container {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 15px;
+            background: #1e1e1e;
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #333;
+        }
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        button {
+            padding: 10px 20px;
+            background-color: #00bcd4;
+            color: black;
+            border: none;
+            border-radius: 5px;
+            font-weight: bold;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:hover {
+            background-color: #008ba3;
+        }
+        button:active {
+            background-color: #005b6b;
+        }
+        canvas {
+            border-radius: 8px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+        }
+    </style>
+</head>
+<body>
+
+    <h2>Relativistic Photon Rocket</h2>
+    
+    <div id="ui-container">
+        <div class="control-group">
+            <label for="initialFuel">Initial Fuel Mass (Tons): <span id="fuelDisplay">50</span></label>
+            <input type="range" id="initialFuel" min="10" max="500" value="50" step="10">
+        </div>
+        <div class="control-group">
+            <label for="payload">Payload Mass (Tons): <span id="payloadDisplay">5</span></label>
+            <input type="range" id="payload" min="1" max="50" value="5" step="1">
+        </div>
+        <div class="control-group" style="justify-content: center;">
+            <button id="resetBtn">Reset Ship</button>
+        </div>
+    </div>
+
+    <div id="canvas-container"></div>
+
+<script>
+    // --- PHYSICS VARIABLES ---
+    let payloadMass = 5;
+    let initialFuelMass = 50;
+    let currentFuelMass = 50;
+    
+    let initialTotalMass = payloadMass + initialFuelMass;
+    let currentTotalMass = initialTotalMass;
+    
+    let velocityC = 0.0; // Velocity as a fraction of c (v/c)
+    let gamma = 1.0;     // Lorentz factor
+    let distance = 0.0;  // Arbitrary distance metric
+    
+    // --- SIMULATION VARIABLES ---
+    let isThrusting = false;
+    let burnRate = 0.2; // Tons burned per frame when thrusting
+    let stars = [];
+
+    // --- UI ELEMENTS ---
+    let fuelSlider, payloadSlider, resetBtn;
+
+    function setup() {
+        let canvas = createCanvas(800, 400);
+        canvas.parent('canvas-container');
+
+        // Hook up HTML UI
+        fuelSlider = document.getElementById('initialFuel');
+        payloadSlider = document.getElementById('payload');
+        resetBtn = document.getElementById('resetBtn');
+
+        fuelSlider.addEventListener('input', () => {
+            document.getElementById('fuelDisplay').innerText = fuelSlider.value;
+            resetShip();
+        });
+        
+        payloadSlider.addEventListener('input', () => {
+            document.getElementById('payloadDisplay').innerText = payloadSlider.value;
+            resetShip();
+        });
+
+        resetBtn.addEventListener('click', resetShip);
+
+        // Initialize starfield
+        for (let i = 0; i < 150; i++) {
+            stars.push(createStar());
+        }
+        
+        resetShip();
+    }
+
+    function draw() {
+        background(10, 10, 20); // Deep space background
+
+        // 1. Process Input & Physics
+        handleInput();
+        updatePhysics();
+
+        // 2. Draw Environment
+        drawStars();
+
+        // 3. Draw Ship
+        drawShip();
+
+        // 4. Draw HUD / Telemetry
+        drawTelemetry();
+    }
+
+    // Spacebar to thrust
+    function keyPressed() {
+        if (keyCode === 32) isThrusting = true; // 32 is Spacebar
+    }
+    function keyReleased() {
+        if (keyCode === 32) isThrusting = false;
+    }
+    
+    function handleInput() {
+        // Alternatively, use mouse press on canvas to thrust
+        if (mouseIsPressed && mouseX > 0 && mouseX < width && mouseY > 0 && mouseY < height) {
+            isThrusting = true;
+        } else if (!keyIsDown(32)) {
+            isThrusting = false;
+        }
+    }
+
+    function updatePhysics() {
+        if (isThrusting && currentFuelMass > 0) {
+            // Burn fuel
+            currentFuelMass -= burnRate;
+            if (currentFuelMass < 0) currentFuelMass = 0;
+            
+            // Update current total mass
+            currentTotalMass = payloadMass + currentFuelMass;
+            
+            // RELATIVISTIC ROCKET EQUATION:
+            // R = Initial_Mass / Current_Mass
+            // v/c = (R^2 - 1) / (R^2 + 1)
+            let R = initialTotalMass / currentTotalMass;
+            let R2 = R * R;
+            velocityC = (R2 - 1) / (R2 + 1);
+            
+        }
+
+        // Calculate Lorentz Factor (Gamma): 1 / sqrt(1 - v^2/c^2)
+        // Guard against division by zero at exactly c
+        if (velocityC >= 0.999999) velocityC = 0.999999; 
+        gamma = 1 / Math.sqrt(1 - (velocityC * velocityC));
+
+        // Update distance (v * dt). We map c to an arbitrary visual speed.
+        distance += velocityC * 10; 
+    }
+
+    function drawShip() {
+        push();
+        translate(width / 3, height / 2); // Position ship left-center
+
+        // Draw Exhaust if thrusting
+        if (isThrusting && currentFuelMass > 0) {
+            noStroke();
+            // Photon exhaust is a pure beam of light
+            fill(0, 255, 255, random(150, 255));
+            rect(-150 - random(10, 30), -5, 150, 10);
+            fill(255, 255, 255, random(200, 255));
+            rect(-150 - random(10, 20), -2, 150, 4);
+        }
+
+        // Draw Ship Body
+        stroke(100);
+        strokeWeight(2);
+        fill(50);
+        // Engine block
+        rect(-30, -15, 20, 30, 5); 
+        // Main Hull
+        fill(80);
+        beginShape();
+        vertex(-10, -20);
+        vertex(50, -20);
+        vertex(80, 0); // Nose cone
+        vertex(50, 20);
+        vertex(-10, 20);
+        endShape(CLOSE);
+
+        // Draw Fuel Tank Inside Ship
+        noStroke();
+        fill(30);
+        rect(0, -10, 40, 20); // Empty tank background
+        
+        let fuelRatio = currentFuelMass / initialFuelMass;
+        // Color shifts from green to red as fuel drops
+        fill(lerpColor(color(255, 0, 0), color(0, 255, 0), fuelRatio));
+        rect(0, -10, 40 * fuelRatio, 20); // Remaining fuel
+
+        // Payload compartment
+        fill(200, 150, 0);
+        ellipse(60, 0, 15, 15);
+
+        pop();
+    }
+
+    function drawTelemetry() {
+        push();
+        fill(255);
+        noStroke();
+        textSize(16);
+        textAlign(LEFT, TOP);
+
+        text("Hold SPACEBAR or Click Canvas to Thrust", 20, 20);
+        
+        textSize(14);
+        text(`Payload Mass: ${payloadMass.toFixed(1)} T`, 20, 60);
+        text(`Fuel Mass: ${currentFuelMass.toFixed(1)} / ${initialFuelMass.toFixed(1)} T`, 20, 80);
+        
+        // Scientific formatting for high gamma
+        let gammaText = gamma > 100 ? gamma.toExponential(2) : gamma.toFixed(2);
+        text(`Lorentz Factor (γ): ${gammaText}`, 20, 100);
+
+        // Speedometer Bar
+        let speedText = `Velocity: ${(velocityC * 100).toFixed(4)}% of c`;
+        text(speedText, width - 250, 20);
+        
+        stroke(100);
+        fill(30);
+        rect(width - 250, 45, 200, 20); // Bar background
+        
+        noStroke();
+        // The speed bar fills up, changing color as it approaches c
+        fill(lerpColor(color(0, 150, 255), color(255, 0, 255), velocityC));
+        rect(width - 250, 45, 200 * velocityC, 20); 
+
+        // Marker for c
+        stroke(255);
+        line(width - 50, 40, width - 50, 70);
+        noStroke();
+        fill(255);
+        textSize(12);
+        text("c", width - 45, 50);
+        pop();
+    }
+
+    function createStar() {
+        return {
+            x: random(width),
+            y: random(height),
+            size: random(1, 3),
+            brightness: random(100, 255)
+        };
+    }
+
+    function drawStars() {
+        push();
+        noStroke();
+        for (let star of stars) {
+            fill(255, 255, 255, star.brightness);
+            // Stars streak longer the closer we get to c
+            let streakLength = max(star.size, velocityC * 50 * star.size); 
+            rect(star.x, star.y, streakLength, star.size);
+
+            // Move stars left based on current velocity
+            // Adding a small base speed so space doesn't look totally dead at 0
+            star.x -= (velocityC * 20 + 0.1) * (star.size * 0.5); 
+
+            if (star.x < -100) {
+                star.x = width;
+                star.y = random(height);
+            }
+        }
+        pop();
+    }
+
+    function resetShip() {
+        payloadMass = parseFloat(payloadSlider.value);
+        initialFuelMass = parseFloat(fuelSlider.value);
+        
+        currentFuelMass = initialFuelMass;
+        initialTotalMass = payloadMass + initialFuelMass;
+        currentTotalMass = initialTotalMass;
+        
+        velocityC = 0.0;
+        gamma = 1.0;
+        isThrusting = false;
+    }
+</script>
+</body>
+</html>

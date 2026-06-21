@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Motion in Galilean Reference Frames - Spaceships</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #030305;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+            color: white;
+        }
+        canvas {
+            box-shadow: 0 0 50px rgba(0, 0, 0, 1);
+            border-radius: 8px;
+        }
+    </style>
+</head>
+<body>
+<script>
+// --- Constants & Globals ---
+const WIDTH = 800;
+const HEIGHT = 600;
+
+let palette;
+let stars = [];
+let spaceships = [];
+
+// App State
+let selectedRef = -1; // -1 means Absolute/Stars frame
+let trailMode = false;
+let zoomMode = false;
+const ZOOM_FACTOR = 10;
+
+// UI
+let buttons = [];
+
+// Smooth camera transition state
+let frozenRefOffsets = new Map();
+
+// --- Math Helpers ---
+function mod(n, m) {
+    return ((n % m) + m) % m;
+}
+
+function setGlow(clr, blurSize) {
+    drawingContext.shadowBlur = blurSize;
+    drawingContext.shadowColor = clr.toString();
+}
+
+function clearGlow() {
+    drawingContext.shadowBlur = 0;
+}
+
+// --- Setup ---
+function setup() {
+    createCanvas(WIDTH, HEIGHT);
+    
+    palette = {
+        bg: color(5, 5, 12),
+        stars: color(255),
+        green: color(0, 255, 100),
+        yellow: color(255, 220, 50),
+        blue: color(50, 150, 255),
+        purple: color(180, 50, 255),
+        white: color(255, 255, 255),
+        red: color(255, 50, 80),
+        gray: color(150, 150, 160),
+        uiBg: color(20, 25, 30, 200)
+    };
+
+    // Initialize Stars
+    for (let i = 0; i < 40; i++) {
+        stars.push({
+            x: random(WIDTH), 
+            y: random(HEIGHT),
+            r: random(1, 3), 
+            twinkle: random(TWO_PI)
+        });
+    }
+
+    // Initialize Spaceships
+    spaceships.push(new Spaceship(200, HEIGHT/2 + 100, "uniform_lr", palette.green));
+    spaceships.push(new Spaceship(WIDTH/2, HEIGHT/2, "circular", palette.yellow));
+    spaceships.push(new Spaceship(WIDTH/2, 150, "uniform_bt", palette.blue));
+    spaceships.push(new Spaceship(150, 150, "uniform_diagonal", palette.purple));
+
+    setupUI();
+    background(palette.bg);
+}
+
+function setupUI() {
+    let bw = 60, bh = 40, ts = 40, ms = 45, pad = 15, spc = 10;
+    let totalW = (bw * 5) + ts + ms + (spc * 6);
+    let cw = totalW + pad * 2;
+    let ch = bh + pad * 2;
+    let cx = (WIDTH - cw) / 2;
+    let cy = HEIGHT - ch - 20;
+
+    buttons.console = {x: cx, y: cy, w: cw, h: ch};
+
+    let startX = cx + pad;
+    let centerY = cy + pad;
+
+    // Ship Buttons
+    buttons.push({ id: 0, x: startX, y: centerY, w: bw, h: bh, c: palette.green, type: 'ref' });
+    buttons.push({ id: 1, x: startX + (bw+spc), y: centerY, w: bw, h: bh, c: palette.yellow, type: 'ref' });
+    buttons.push({ id: 2, x: startX + 2*(bw+spc), y: centerY, w: bw, h: bh, c: palette.blue, type: 'ref' });
+    buttons.push({ id: 3, x: startX + 3*(bw+spc), y: centerY, w: bw, h: bh, c: palette.purple, type: 'ref' });
+    
+    // Absolute Frame Button
+    buttons.push({ id: -1, x: startX + 4*(bw+spc), y: centerY, w: bw, h: bh, c: palette.white, type: 'ref' });
+
+    // Trail Button
+    buttons.push({ id: 'trail', x: startX + 5*(bw+spc), y: centerY, w: ts, h: ts, c: palette.red, type: 'trail' });
+
+    // Zoom Button
+    buttons.push({ id: 'zoom', x: startX + 5*(bw+spc) + ts + spc, y: centerY, w: ms, h: ms, c: palette.gray, type: 'zoom' });
+}
+
+// --- Main Draw Loop ---
+function draw() {
+    // 1. Trails / Background
+    if (!trailMode) {
+        background(palette.bg);
+    } else {
+        noStroke();
+        fill(5, 5, 12, 15); 
+        rect(0, 0, WIDTH, HEIGHT);
+    }
+
+    // 2. Physics Update
+    let refVx = 0, refVy = 0;
+    if (selectedRef !== -1) {
+        refVx = spaceships[selectedRef].vx;
+        refVy = spaceships[selectedRef].vy;
+    }
+
+    // Update Stars (Stars physically move in relation to observer to wrap properly)
+    stars.forEach(s => {
+        s.x = mod(s.x - refVx, WIDTH);
+        s.y = mod(s.y - refVy, HEIGHT);
+    });
+
+    // Update Spaceships
+    spaceships.forEach(sp => sp.update());
+
+    // 3. Drawing
+    // Draw Stars
+    if (!zoomMode) {
+        noStroke();
+        stars.forEach(s => {
+            let alpha = 150 + 105 * sin(frameCount * 0.05 + s.twinkle);
+            fill(255, 255, 255, alpha);
+            circle(s.x, s.y, s.r * 2);
+        });
+    }
+
+    // Determine visual reference center
+    let refX = 0, refY = 0;
+    if (selectedRef !== -1) {
+        refX = spaceships[selectedRef].x;
+        refY = spaceships[selectedRef].y;
+    }
+
+    // Draw Spaceships
+    spaceships.forEach((sp, i) => {
+        if (zoomMode) {
+            if (i === selectedRef) sp.draw(refX, refY, true);
+        } else {
+            // Apply frozen offsets if in absolute mode to prevent visual snapping
+            if (selectedRef === -1 && frozenRefOffsets.has(i)) {
+                let offset = frozenRefOffsets.get(i);
+                refX = sp.x - offset.x - WIDTH/2;
+                refY = sp.y - offset.y - HEIGHT/2;
+            }
+            sp.draw(refX, refY, false);
+        }
+    });
+
+    // 4. UI
+    drawConsole();
+}
+
+// --- Physics Classes ---
+class Spaceship {
+    constructor(x, y, motionType, col) {
+        this.x = x; this.y = y;
+        this.motionType = motionType;
+        this.color = col;
+        this.origRadius = 20;
+        this.radius = 20;
+        this.speed = 2;
+        this.angle = 0;
+        this.vx = 0; this.vy = 0;
+        this.smallObjects = [];
+        
+        if (col === palette.yellow) {
+            let offset = this.radius * 0.25;
+            this.addSmallObject(x + offset, y);
+        } else {
+            this.addSmallObject(x, y);
+        }
+    }
+
+    addSmallObject(wx, wy) {
+        let relX = wx - this.x;
+        let relY = wy - this.y;
+        let dist = dist2D(0, 0, relX, relY);
+        let maxAllowed = this.radius - (this.origRadius / 15) - 2;
+
+        if (dist > maxAllowed) {
+            let a = dist > 0 ? atan2(relY, relX) : random(TWO_PI);
+            wx = this.x + maxAllowed * cos(a);
+            wy = this.y + maxAllowed * sin(a);
+        }
+
+        this.smallObjects.push({
+            x: wx, y: wy,
+            radius: Math.max(2, this.origRadius / 15),
+            vx: 0, vy: 0,
+            relX: wx - this.x,
+            relY: wy - this.y
+        });
+        return true;
+    }
+
+    constrainToShip(obj) {
+        let isIRF = [palette.green, palette.blue, palette.purple].includes(this.color);
+        if (isIRF) {
+            obj.x = this.x + obj.relX;
+            obj.y = this.y + obj.relY;
+            return false;
+        }
+
+        // For yellow (rotating) frame
+        let relX = obj.x - this.x;
+        let relY = obj.y - this.y;
+        let d = dist2D(0, 0, relX, relY);
+        let maxDist = this.radius - obj.radius - 1;
+
+        if (d > maxDist) {
+            let a = atan2(relY, relX);
+            obj.x = this.x + maxDist * cos(a);
+            obj.y = this.y + maxDist * sin(a);
+            return true;
+        }
+        return false;
+    }
+
+    updateCollisions() {
+        if (this.color !== palette.yellow) return;
+
+        this.smallObjects.forEach(obj => {
+            obj.x += obj.vx;
+            obj.y += obj.vy;
+            this.constrainToShip(obj);
+
+            let relX = obj.x - this.x;
+            let relY = obj.y - this.y;
+            let d = dist2D(0, 0, relX, relY);
+
+            if (d > 0) {
+                // Centrifugal Force
+                let angVel = 0.02;
+                let centForce = (angVel * angVel) * d * 0.1;
+                let dir = atan2(relY, relX);
+                obj.vx += centForce * cos(dir);
+                obj.vy += centForce * sin(dir);
+
+                // Friction
+                obj.vx *= 0.995;
+                obj.vy *= 0.995;
+            }
+
+            // Wall Bounce
+            if (d > this.radius - obj.radius - 0.1) {
+                let nx = d > 0 ? relX / d : cos(random(TWO_PI));
+                let ny = d > 0 ? relY / d : sin(random(TWO_PI));
+                let vDotN = obj.vx * nx + obj.vy * ny;
+
+                if (vDotN < 0) {
+                    obj.vx -= 1.8 * vDotN * nx;
+                    obj.vy -= 1.8 * vDotN * ny;
+                    let spd = dist2D(0, 0, obj.vx, obj.vy);
+                    if (spd > 5) {
+                        obj.vx *= (5/spd);
+                        obj.vy *= (5/spd);
+                    }
+                }
+            }
+        });
+
+        // Object-to-object collisions
+        for (let i = 0; i < this.smallObjects.length; i++) {
+            for (let j = i + 1; j < this.smallObjects.length; j++) {
+                let o1 = this.smallObjects[i];
+                let o2 = this.smallObjects[j];
+                let dx = o2.x - o1.x;
+                let dy = o2.y - o1.y;
+                let d = dist2D(0, 0, dx, dy);
+                let minDist = o1.radius + o2.radius;
+
+                if (d > 0 && d < minDist) {
+                    let nx = dx / d, ny = dy / d;
+                    let dvx = o2.vx - o1.vx, dvy = o2.vy - o1.vy;
+                    let vDotN = dvx * nx + dvy * ny;
+
+                    if (vDotN < 0) {
+                        let impulse = -1.5 * vDotN / (1/o1.radius + 1/o2.radius);
+                        o1.vx -= impulse * nx / o1.radius;
+                        o1.vy -= impulse * ny / o1.radius;
+                        o2.vx += impulse * nx / o2.radius;
+                        o2.vy += impulse * ny / o2.radius;
+
+                        let corr = (minDist - d) * 0.5;
+                        o1.x -= corr * nx; o1.y -= corr * ny;
+                        o2.x += corr * nx; o2.y += corr * ny;
+                    }
+                }
+            }
+        }
+    }
+
+    update() {
+        let isIRF = [palette.green, palette.blue, palette.purple].includes(this.color);
+        let spd = isIRF ? this.speed * 0.5 : this.speed;
+
+        if (this.motionType === "uniform_lr") {
+            this.vx = spd; this.vy = 0;
+        } else if (this.motionType === "uniform_bt") {
+            this.vx = 0; this.vy = -spd;
+        } else if (this.motionType === "uniform_diagonal") {
+            this.vx = spd; this.vy = -spd;
+        } else if (this.motionType === "circular") {
+            this.angle += 0.02;
+            this.vx = -100 * sin(this.angle) * 0.02;
+            this.vy = 100 * cos(this.angle) * 0.02;
+        }
+
+        let prevX = this.x;
+        let prevY = this.y;
+
+        this.x = mod(this.x + this.vx, WIDTH);
+        this.y = mod(this.y + this.vy, HEIGHT);
+
+        let dx = this.x - prevX;
+        let dy = this.y - prevY;
+        if (abs(dx) > WIDTH/2) dx -= Math.sign(dx) * WIDTH;
+        if (abs(dy) > HEIGHT/2) dy -= Math.sign(dy) * HEIGHT;
+
+        this.smallObjects.forEach(obj => {
+            if (isIRF) {
+                obj.x = mod(obj.x + dx, WIDTH);
+                obj.y = mod(obj.y + dy, HEIGHT);
+                obj.vx = 0; obj.vy = 0;
+            } else {
+                obj.x = mod(obj.x + obj.vx, WIDTH);
+                obj.y = mod(obj.y + obj.vy, HEIGHT);
+                this.constrainToShip(obj);
+            }
+        });
+
+        this.updateCollisions();
+    }
+
+    draw(refX, refY, isZoomed) {
+        let relX = mod(this.x - refX + WIDTH/2, WIDTH) - WIDTH/2;
+        let relY = mod(this.y - refY + HEIGHT/2, HEIGHT) - HEIGHT/2;
+
+        push();
+        if (isZoomed) {
+            translate(WIDTH/2, HEIGHT/2);
+            
+            // Draw Giant Ship
+            setGlow(this.color, 30);
+            stroke(this.color);
+            strokeWeight(4);
+            fill(red(this.color), green(this.color), blue(this.color), 30);
+            circle(0, 0, this.radius * 2 * ZOOM_FACTOR);
+            clearGlow();
+
+            // Draw Giant Small Objects
+            noStroke();
+            fill(palette.red);
+            this.smallObjects.forEach(obj => {
+                let ox = obj.x - this.x;
+                let oy = obj.y - this.y;
+                circle(ox * ZOOM_FACTOR, oy * ZOOM_FACTOR, obj.radius * 2 * ZOOM_FACTOR);
+            });
+        } else {
+            let drawX = WIDTH/2 + relX;
+            let drawY = HEIGHT/2 + relY;
+            translate(drawX, drawY);
+
+            // Draw Normal Ship
+            setGlow(this.color, 15);
+            fill(this.color);
+            noStroke();
+            circle(0, 0, this.radius * 2);
+            clearGlow();
+
+            // Draw Normal Small Objects
+            fill(palette.white);
+            this.smallObjects.forEach(obj => {
+                let ox = obj.x - this.x;
+                let oy = obj.y - this.y;
+                circle(ox, oy, obj.radius * 2);
+            });
+        }
+        pop();
+    }
+}
+
+function dist2D(x1, y1, x2, y2) {
+    return Math.sqrt((x2-x1)*(x2-x1) + (y2-y1)*(y2-y1));
+}
+
+// --- UI Logic ---
+function drawConsole() {
+    let cb = buttons.console;
+    
+    // Glass panel
+    fill(palette.uiBg);
+    stroke(80, 80, 100);
+    strokeWeight(1);
+    rect(cb.x, cb.y, cb.w, cb.h, 12);
+
+    buttons.forEach(b => {
+        let active = false;
+        if (b.type === 'ref' && selectedRef === b.id) active = true;
+        if (b.type === 'trail' && trailMode) active = true;
+        if (b.type === 'zoom' && zoomMode) active = true;
+
+        push();
+        translate(b.x, b.y);
+        
+        let c = active ? palette.white : b.c; 
+        if (active) setGlow(b.c, 20);
+        
+        fill(c);
+        noStroke();
+        
+        if (b.type === 'ref') {
+            rect(0, 0, b.w, b.h, 6);
+            if (active) {
+                noFill();
+                stroke(255);
+                strokeWeight(3);
+                rect(-3, -3, b.w+6, b.h+6, 8);
+            }
+        } else if (b.type === 'trail') {
+            triangle(0, b.h, b.w, b.h, b.w/2, 0);
+            if (active) {
+                noFill();
+                stroke(255);
+                strokeWeight(3);
+                triangle(-4, b.h+4, b.w+4, b.h+4, b.w/2, -4);
+            }
+        } else if (b.type === 'zoom') {
+            stroke(active ? palette.white : color(100));
+            strokeWeight(3);
+            noFill();
+            circle(b.w/3, b.h/3, b.w/2);
+            line(b.w/2, b.h/2, b.w*0.8, b.h*0.8);
+            if (active) {
+                stroke(255);
+                strokeWeight(2);
+                rect(-3, -3, b.w+6, b.h+6, 8);
+            }
+        }
+        
+        clearGlow();
+        pop();
+    });
+}
+
+function mousePressed() {
+    // Check buttons
+    for (let b of buttons) {
+        let clicked = false;
+        if (b.type === 'trail') {
+            clicked = mouseX > b.x && mouseX < b.x + b.w && mouseY > b.y && mouseY < b.y + b.h;
+        } else {
+            clicked = mouseX > b.x && mouseX < b.x + b.w && mouseY > b.y && mouseY < b.y + b.h;
+        }
+
+        if (clicked) {
+            if (b.type === 'ref') {
+                if (b.id === -1) {
+                    // Save offsets to prevent visual snapping when entering absolute mode
+                    frozenRefOffsets.clear();
+                    spaceships.forEach((sp, i) => {
+                        frozenRefOffsets.set(i, {x: sp.x - WIDTH/2, y: sp.y - HEIGHT/2});
+                    });
+                    zoomMode = false;
+                } else {
+                    frozenRefOffsets.clear();
+                }
+                selectedRef = b.id;
+            } else if (b.type === 'trail') {
+                trailMode = !trailMode;
+            } else if (b.type === 'zoom') {
+                if (selectedRef !== -1) zoomMode = !zoomMode;
+            }
+            return;
+        }
+    }
+
+    // Check Zoom Mode interaction (Add Particle)
+    if (zoomMode && selectedRef !== -1) {
+        let refShip = spaceships[selectedRef];
+        // Convert mouse position to world coordinates based on zoom factor
+        let worldX = refShip.x + (mouseX - WIDTH/2) / ZOOM_FACTOR;
+        let worldY = refShip.y + (mouseY - HEIGHT/2) / ZOOM_FACTOR;
+        
+        if (refShip.addSmallObject(worldX, worldY)) {
+            let newObj = refShip.smallObjects[refShip.smallObjects.length - 1];
+            refShip.constrainToShip(newObj);
+        }
+    }
+}
+
+function keyPressed() {
+    if (keyCode === ESCAPE && zoomMode) {
+        zoomMode = false;
+    }
+}
+</script>
+</body>
+</html>

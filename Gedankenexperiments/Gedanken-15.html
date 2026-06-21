@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Relativistic Sticky Mass</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.6.0/p5.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #121212;
+            color: #ffffff;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        h2 { margin-top: 0; }
+        #ui-container {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 15px;
+            background: #1e1e1e;
+            padding: 15px 30px;
+            border-radius: 8px;
+            border: 1px solid #333;
+            align-items: center;
+        }
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        button {
+            padding: 10px 20px;
+            background-color: #e91e63;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            font-weight: bold;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background 0.2s;
+        }
+        button:hover { background-color: #c2185b; }
+        #resetBtn { background-color: #555; color: white; }
+        #resetBtn:hover { background-color: #444; }
+        
+        #main-area {
+            display: flex;
+            gap: 20px;
+            align-items: flex-start;
+        }
+        canvas {
+            border-radius: 8px;
+            box-shadow: 0 8px 25px rgba(0,0,0,0.8);
+        }
+        #stats-panel {
+            background: #1f1b24;
+            border: 2px solid #4a3b5c;
+            border-radius: 8px;
+            padding: 20px;
+            width: 280px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            font-size: 15px;
+            line-height: 1.8;
+        }
+        .stat-value {
+            font-weight: bold;
+            color: #e040fb;
+            font-size: 18px;
+        }
+        .energy-box {
+            background: #2a1b2e;
+            padding: 10px;
+            border-radius: 5px;
+            text-align: center;
+            border: 1px solid #e040fb;
+            margin-bottom: 15px;
+        }
+        .energy-value {
+            font-size: 28px;
+            font-weight: bold;
+            color: #ffeb3b;
+        }
+    </style>
+</head>
+<body>
+
+    <h2>Sticky Mass Inelastic Collision</h2>
+    
+    <div id="ui-container">
+        <div class="control-group">
+            <label for="velocitySlider">Impact Velocity (v/c): <span id="velDisplay">0.50</span></label>
+            <input type="range" id="velocitySlider" min="0.01" max="0.99" value="0.50" step="0.01">
+        </div>
+        <div class="control-group" style="flex-direction: row; gap: 10px;">
+            <button id="shootBtn">Collide!</button>
+            <button id="resetBtn">Reset</button>
+        </div>
+    </div>
+
+    <div id="main-area">
+        <div id="canvas-container"></div>
+        
+        <div id="stats-panel">
+            <div class="energy-box">
+                Final Rest Mass<br>
+                <span class="energy-value" id="stat-final-mass">2.00 kg</span>
+            </div>
+
+            <div>Particle A Rest Mass: <span class="stat-value">1.00 kg</span></div>
+            <div>Particle B Rest Mass: <span class="stat-value">1.00 kg</span></div>
+            <div style="margin-top: 5px; color: #aaa; font-size: 13px;">(Initial System Rest Mass: 2.00 kg)</div>
+            
+            <hr style="border-color: #4a3b5c; margin: 15px 0;">
+            
+            <div>Lorentz Factor (γ): <span class="stat-value" id="stat-gamma">1.15</span></div>
+            <div>Total Kinetic Energy: <br><span class="stat-value" id="stat-ke" style="color: #ffeb3b;">--</span></div>
+            
+            <hr style="border-color: #4a3b5c; margin: 15px 0;">
+            <div id="math-explanation" style="font-size: 13px; color: #ccc; line-height: 1.4;">
+                <strong>Conservation of Energy:</strong><br>
+                E_total = E_rest + E_kinetic<br>
+                When they stop, Kinetic Energy converts entirely into new Rest Mass!
+            </div>
+        </div>
+    </div>
+
+<script>
+    // --- AUDIO SYNTHESIZER ---
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    const audioCtx = new AudioContext();
+
+    function playSound(type) {
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        let osc = audioCtx.createOscillator();
+        let gain = audioCtx.createGain();
+        
+        if (type === 'thud') {
+            // Heavy bass thud for merging mass
+            osc.type = 'square';
+            osc.frequency.setValueAtTime(150, audioCtx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(20, audioCtx.currentTime + 0.5);
+            gain.gain.setValueAtTime(1, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
+            osc.start();
+            osc.stop(audioCtx.currentTime + 0.5);
+        } else if (type === 'charge') {
+            // High pitched hum for movement
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(400, audioCtx.currentTime);
+            gain.gain.setValueAtTime(0, audioCtx.currentTime);
+            gain.gain.linearRampToValueAtTime(0.1, audioCtx.currentTime + 0.1);
+            gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 1.0);
+            osc.start();
+            osc.stop(audioCtx.currentTime + 1.0);
+        }
+        
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+    }
+
+    // --- PHYSICS CONSTANTS ---
+    const C_VISUAL = 15; // Pixels per frame
+    const BASE_R = 30; // Radius for 1.0 kg
+    const M0 = 1.0; // Rest mass of one particle
+
+    // --- STATE VARIABLES ---
+    let v_c = 0.50; 
+    let state = 'idle'; // 'idle', 'moving', 'merged'
+    let flashAlpha = 0; // Screen flash effect on impact
+    
+    let p1, p2, mergedP;
+    let finalMass = 2.0;
+
+    let velSlider, shootBtn, resetBtn;
+
+    function setup() {
+        let canvas = createCanvas(800, 350);
+        canvas.parent('canvas-container');
+
+        velSlider = document.getElementById('velocitySlider');
+        shootBtn = document.getElementById('shootBtn');
+        resetBtn = document.getElementById('resetBtn');
+
+        velSlider.addEventListener('input', () => {
+            document.getElementById('velDisplay').innerText = parseFloat(velSlider.value).toFixed(2);
+            updateStatsHUD();
+            if (state === 'idle') resetSim();
+        });
+
+        shootBtn.addEventListener('click', () => {
+            if (state === 'idle') {
+                audioCtx.resume();
+                playSound('charge');
+                state = 'moving';
+            }
+        });
+
+        resetBtn.addEventListener('click', resetSim);
+
+        resetSim();
+    }
+
+    function resetSim() {
+        v_c = parseFloat(velSlider.value);
+        state = 'idle';
+        flashAlpha = 0;
+
+        p1 = { x: 100, y: height / 2, c: color(0, 191, 255), mass: M0, r: BASE_R };
+        p2 = { x: 700, y: height / 2, c: color(255, 64, 129), mass: M0, r: BASE_R };
+        mergedP = null;
+
+        updateStatsHUD();
+    }
+
+    function draw() {
+        background(20, 20, 30);
+
+        // Draw grid lines to feel like a lab
+        stroke(255, 255, 255, 10);
+        for(let i=0; i<width; i+=40) line(i, 0, i, height);
+        for(let i=0; i<height; i+=40) line(0, i, width, i);
+
+        // Center impact zone
+        stroke(255, 255, 255, 30);
+        strokeWeight(2);
+        line(width/2, 50, width/2, height-50);
+        noStroke();
+        fill(255, 255, 255, 10);
+        ellipse(width/2, height/2, 100);
+
+        if (state === 'moving') {
+            p1.x += v_c * C_VISUAL;
+            p2.x -= v_c * C_VISUAL;
+
+            // Collision check
+            if (p2.x - p1.x <= BASE_R * 2) {
+                p1.x = width/2 - BASE_R;
+                p2.x = width/2 + BASE_R;
+                executeCollision();
+            }
+        }
+
+        // Draw Particles
+        if (state !== 'merged') {
+            // Motion blur/glow
+            if (state === 'moving') {
+                fill(0, 191, 255, 50); ellipse(p1.x - 10, p1.y, p1.r * 2);
+                fill(255, 64, 129, 50); ellipse(p2.x + 10, p2.y, p2.r * 2);
+            }
+            fill(p1.c); ellipse(p1.x, p1.y, p1.r * 2);
+            fill(p2.c); ellipse(p2.x, p2.y, p2.r * 2);
+            
+            fill(255); textAlign(CENTER, CENTER); textSize(16); text("1kg", p1.x, p1.y); text("1kg", p2.x, p2.y);
+        } else {
+            // Draw merged particle
+            // Pulsing glow based on new mass
+            let glow = 20 + sin(frameCount * 0.1) * 10;
+            fill(224, 64, 251, glow);
+            ellipse(mergedP.x, mergedP.y, mergedP.r * 2 + 20);
+            
+            fill(mergedP.c);
+            ellipse(mergedP.x, mergedP.y, mergedP.r * 2);
+            
+            fill(255); textAlign(CENTER, CENTER); textSize(20);
+            text(`${finalMass.toFixed(2)} kg`, mergedP.x, mergedP.y);
+        }
+
+        // Screen Flash Effect
+        if (flashAlpha > 0) {
+            fill(255, 255, 255, flashAlpha);
+            rect(0, 0, width, height);
+            flashAlpha -= 10;
+        }
+    }
+
+    function executeCollision() {
+        state = 'merged';
+        playSound('thud');
+        flashAlpha = 200;
+
+        // PHYSICS CALCULATION
+        let gamma = 1 / sqrt(1 - v_c * v_c);
+        
+        // E_total = 2 * (gamma * m0 * c^2). Since c=1 in our units, E = 2 * gamma * 1
+        // Because P_total = 0 (moving opposite directions), Final Momentum = 0.
+        // Therefore, Final Mass = Total Energy.
+        finalMass = 2 * gamma * M0;
+
+        // Visual radius scales by the square root of mass so AREA represents mass
+        let newR = BASE_R * sqrt(finalMass / 2); // Normalized to initial size
+
+        mergedP = {
+            x: width / 2,
+            y: height / 2,
+            c: color(156, 39, 176), // Purple mix
+            mass: finalMass,
+            r: newR
+        };
+
+        updateStatsHUD();
+    }
+
+    function updateStatsHUD() {
+        let gamma = 1 / Math.sqrt(1 - (v_c * v_c));
+        
+        let E_rest_initial = 2 * M0; // c=1
+        let E_total = 2 * gamma * M0;
+        let KE = E_total - E_rest_initial;
+
+        document.getElementById('stat-gamma').innerText = gamma.toFixed(3);
+        
+        if (state === 'merged') {
+            document.getElementById('stat-ke').innerText = `0.00 c² (Converted to Mass!)`;
+            document.getElementById('stat-ke').style.color = "#ff5252";
+            document.getElementById('stat-final-mass').innerText = `${finalMass.toFixed(2)} kg`;
+        } else {
+            document.getElementById('stat-ke').innerText = `${KE.toFixed(2)} c²`;
+            document.getElementById('stat-ke').style.color = "#ffeb3b";
+            document.getElementById('stat-final-mass').innerText = `??? kg`;
+        }
+    }
+</script>
+</body>
+</html>

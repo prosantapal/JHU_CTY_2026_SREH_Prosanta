@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Galilean Transformation Demonstration</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #030305;
+            font-family: 'Courier New', Courier, monospace;
+            overflow: hidden;
+            color: white;
+        }
+        canvas {
+            box-shadow: 0 0 50px rgba(0, 0, 0, 1);
+            border-radius: 8px;
+        }
+    </style>
+</head>
+<body>
+<script>
+// --- Constants & Globals ---
+const WIDTH = 800;
+const HEIGHT = 600;
+const GROUND_Y = (HEIGHT * 2) / 3;
+
+let palette;
+let stars = [];
+let projectiles = [];
+
+// Platform & Physics State
+let greenPlatform;
+let C_SPEED = 4; // Controlled by Launch slider
+let platformSpeed = 4; // Controlled by Platform slider
+
+// Reference & App State
+let selectedRef = 2; // 0=Green, 1=Projectile, 2=Ground(Absolute)
+let trailMode = false;
+let isFrozen = false;
+
+// Timers
+let greenTimer = 0;
+let groundTimer = 0;
+let groundTimerX = 100;
+
+// UI
+let buttons = [];
+let sliders = []; // Changed to an array to handle multiple sliders
+let groundOffset = 0;
+
+function setup() {
+    createCanvas(WIDTH, HEIGHT);
+    
+    palette = {
+        bg: color(5, 5, 12),
+        ground: color(30, 30, 40),
+        stars: color(255),
+        green: color(0, 255, 100),
+        brown: color(255, 150, 50),
+        red: color(255, 50, 80),
+        white: color(255, 255, 255),
+        blue: color(50, 150, 255),
+        purple: color(180, 50, 255),
+        ruler: color(100, 100, 120),
+        consoleBg: color(20, 25, 30, 200)
+    };
+
+    for (let i = 0; i < 60; i++) {
+        stars.push({
+            x: random(WIDTH), y: random(GROUND_Y),
+            r: random(1, 3), twinkle: random(TWO_PI)
+        });
+    }
+
+    greenPlatform = {
+        x: 100, y: GROUND_Y - 20, w: 160, h: 20
+    };
+
+    setupUI();
+    background(palette.bg);
+}
+
+function setupUI() {
+    let cbW = 750, cbH = 80;
+    let cbX = (WIDTH - cbW) / 2;
+    let cbY = HEIGHT - cbH - 10;
+    
+    buttons.console = {x: cbX, y: cbY, w: cbW, h: cbH};
+
+    let bR = 18; 
+    let cy = cbY + 45; 
+    
+    // UI Zones
+    let grpSpeed = cbX + 90;
+    let grpRef = cbX + 290;
+    let grpTrail = cbX + 430;
+    let grpTime = cbX + 530;
+    let grpLaunch = cbX + 650;
+
+    // Platform Speed Slider
+    sliders.push({
+        id: 'platform',
+        x: grpSpeed - 55, y: cy - 14, w: 110, h: 6,
+        min: 0, max: 9, val: platformSpeed, dragging: false,
+        color: palette.green
+    });
+
+    // Bullet Launch Speed Slider
+    sliders.push({
+        id: 'bullet',
+        x: grpSpeed - 55, y: cy + 18, w: 110, h: 6,
+        min: 1, max: 9, val: C_SPEED, dragging: false,
+        color: palette.brown
+    });
+
+    // Buttons
+    buttons.push({ id: 0, x: grpRef - 45, y: cy, r: bR, c: palette.green, type: 'ref' });
+    buttons.push({ id: 1, x: grpRef,      y: cy, r: bR, c: palette.brown, type: 'ref' });
+    buttons.push({ id: 2, x: grpRef + 45, y: cy, r: bR, c: palette.white, type: 'ref' });
+    buttons.push({ id: 3, x: grpTrail, y: cy, r: bR, c: palette.red, type: 'trail' });
+    buttons.push({ id: 4, x: grpTime - 22, y: cy, r: bR, c: palette.blue, type: 'pause' });
+    buttons.push({ id: 5, x: grpTime + 22, y: cy, r: bR, c: palette.purple, type: 'play' });
+    buttons.push({ id: 6, x: grpLaunch - 25, y: cy, r: bR, c: palette.brown, type: 'gunLeft' });
+    buttons.push({ id: 7, x: grpLaunch + 25, y: cy, r: bR, c: palette.brown, type: 'gunRight' });
+}
+
+function setGlow(clr, blurSize) {
+    drawingContext.shadowBlur = blurSize;
+    drawingContext.shadowColor = clr.toString();
+}
+function clearGlow() {
+    drawingContext.shadowBlur = 0;
+}
+
+function mod(n, m) { return ((n % m) + m) % m; }
+
+function launchProjectile(dir) {
+    let launchX = greenPlatform.x + greenPlatform.w / 2;
+    // Absolute velocity of projectile = Platform Speed + (Launch Speed * direction)
+    let absVel = platformSpeed + (C_SPEED * dir);
+    
+    projectiles.push({
+        x: launchX,
+        y: greenPlatform.y - 15,
+        absVel: absVel,
+        dist: 0,
+        maxDist: WIDTH * 2
+    });
+}
+
+function draw() {
+    let dt = deltaTime / 1000; 
+
+    let v_green = platformSpeed;
+    let v_ground = 0;
+    let v_ref = 0;
+    
+    if (selectedRef === 0) {
+        v_ref = v_green;
+    } else if (selectedRef === 1) {
+        if (projectiles.length > 0) v_ref = projectiles[0].absVel; 
+        else v_ref = 0;
+    } else if (selectedRef === 2) {
+        v_ref = v_ground;
+    }
+
+    if (!isFrozen) {
+        stars.forEach(s => { s.x -= v_ref; s.x = mod(s.x, WIDTH); });
+        
+        groundOffset -= v_ref;
+        groundTimerX = mod(groundTimerX - v_ref, WIDTH);
+        
+        greenPlatform.x += (v_green - v_ref);
+        greenPlatform.x = mod(greenPlatform.x + greenPlatform.w, WIDTH * 2) - greenPlatform.w;
+
+        for (let i = projectiles.length - 1; i >= 0; i--) {
+            let p = projectiles[i];
+            let move = (p.absVel - v_ref);
+            p.x += move;
+            p.x = mod(p.x, WIDTH * 2);
+            p.dist += abs(move);
+            
+            if (p.dist > p.maxDist) {
+                projectiles.splice(i, 1);
+            }
+        }
+
+        greenTimer = (greenTimer + dt) % 100;
+        groundTimer = (groundTimer + dt) % 100;
+    }
+
+    if (!trailMode) {
+        background(palette.bg);
+    } else {
+        noStroke();
+        fill(5, 5, 12, 30); 
+        rect(0, 0, WIDTH, HEIGHT);
+    }
+
+    noStroke();
+    stars.forEach(s => {
+        let alpha = 150 + 105 * sin(frameCount * 0.05 + s.twinkle);
+        fill(255, 255, 255, alpha);
+        circle(s.x, s.y, s.r * 2);
+    });
+
+    fill(palette.ground);
+    noStroke();
+    rect(0, GROUND_Y, WIDTH, HEIGHT - GROUND_Y);
+    
+    stroke(palette.ruler);
+    strokeWeight(2);
+    line(0, GROUND_Y + 20, WIDTH, GROUND_Y + 20);
+    
+    let pixelsPerUnit = 16; 
+    let startTick = Math.floor(-groundOffset / pixelsPerUnit) - 1;
+    let endTick = Math.ceil((WIDTH - groundOffset) / pixelsPerUnit) + 1;
+
+    for (let i = startTick; i <= endTick; i++) {
+        let x = groundOffset + i * pixelsPerUnit;
+        if (i % 10 === 0) {
+            stroke(palette.ruler);
+            strokeWeight(2);
+            line(x, GROUND_Y + 20, x, GROUND_Y + 40);
+            noStroke();
+            fill(180);
+            textAlign(CENTER, TOP);
+            textSize(13);
+            textStyle(BOLD);
+            text(i, x, GROUND_Y + 45);
+        } else {
+            stroke(palette.ruler);
+            strokeWeight(1);
+            line(x, GROUND_Y + 30, x, GROUND_Y + 40);
+        }
+    }
+
+    projectiles.forEach(p => {
+        push();
+        translate(p.x, p.y);
+        setGlow(palette.brown, 15);
+        fill(palette.brown);
+        noStroke();
+        rectMode(CENTER);
+        rect(0, 0, 14, 14, 3);
+        fill(255);
+        rect(0, 0, 6, 6, 2);
+        clearGlow();
+        pop();
+    });
+
+    push();
+    translate(greenPlatform.x, greenPlatform.y);
+    setGlow(palette.green, 20);
+    fill(0, 150, 50, 200);
+    stroke(palette.green);
+    strokeWeight(2);
+    rect(0, 0, greenPlatform.w, greenPlatform.h, 5);
+    clearGlow();
+    drawStopwatch(greenTimer, greenPlatform.w/2, -15, palette.green);
+    pop();
+
+    drawStopwatch(groundTimer, groundTimerX, GROUND_Y + 70, palette.white);
+    drawConsole();
+}
+
+function drawStopwatch(timeVal, x, y, col) {
+    let secs = floor(timeVal);
+    let tenths = floor((timeVal - secs) * 10);
+    let timeStr = nf(secs, 2) + "." + tenths;
+
+    push();
+    translate(x, y);
+    setGlow(col, 10);
+    fill(col);
+    noStroke();
+    textAlign(CENTER, CENTER);
+    textSize(20);
+    textStyle(BOLD);
+    text(timeStr, 0, 0);
+    clearGlow();
+    pop();
+}
+
+function drawConsole() {
+    let cb = buttons.console;
+    
+    fill(palette.consoleBg);
+    stroke(100, 100, 120);
+    strokeWeight(1);
+    rect(cb.x, cb.y, cb.w, cb.h, 12);
+
+    let grpSpeed = cb.x + 90;
+    let grpRef = cb.x + 290;
+    let grpTrail = cb.x + 430;
+    let grpTime = cb.x + 530;
+    let grpLaunch = cb.x + 650;
+    let labelY = cb.y + 18;
+
+    // Draw Labels
+    fill(200);
+    noStroke();
+    textSize(11);
+    textStyle(NORMAL);
+    textAlign(CENTER);
+    
+    // Dynamic text for the two sliders
+    text("PLATFORM v: " + platformSpeed.toFixed(1), grpSpeed, cb.y + 16);
+    text("LAUNCH v: " + C_SPEED.toFixed(1), grpSpeed, cb.y + 48);
+    
+    text("REFERENCE", grpRef, labelY);
+    text("TRAILS", grpTrail, labelY);
+    text("TIME", grpTime, labelY);
+    text("LAUNCH", grpLaunch, labelY);
+
+    // Draw Sliders
+    sliders.forEach(sl => {
+        stroke(100);
+        strokeWeight(4);
+        line(sl.x, sl.y + sl.h/2, sl.x + sl.w, sl.y + sl.h/2);
+        
+        let thumbX = map(sl.val, sl.min, sl.max, sl.x, sl.x + sl.w);
+        setGlow(sl.color, 15);
+        fill(sl.color);
+        noStroke();
+        rect(thumbX - 5, sl.y - 5, 10, 16, 3);
+        clearGlow();
+    });
+
+    // Draw Buttons
+    buttons.forEach(b => {
+        let active = false;
+        if (b.type === 'ref' && selectedRef === b.id) active = true;
+        if (b.type === 'trail' && trailMode) active = true;
+        if (b.type === 'pause' && isFrozen) active = true;
+        if (b.type === 'play' && !isFrozen) active = true;
+
+        push();
+        translate(b.x, b.y);
+        let c = active ? color(255) : b.c; 
+        if (active) setGlow(b.c, 20);
+        fill(c);
+        noStroke();
+        
+        if (b.type === 'pause') {
+            rect(-5, -6, 4, 12);
+            rect(3, -6, 4, 12);
+        } else if (b.type === 'play') {
+            triangle(-4, -7, 6, 0, -4, 7);
+        } else if (b.type === 'trail') {
+            triangle(-8, 6, 8, 6, 0, -8);
+        } else if (b.type === 'gunLeft' || b.type === 'gunRight') {
+            fill(active ? 200 : 80);
+            if (b.type === 'gunLeft') {
+                rect(-10, -3, 15, 6); 
+                rect(-3, 0, 6, 12);   
+            } else {
+                rect(-5, -3, 15, 6);  
+                rect(-3, 0, 6, 12);   
+            }
+        } else {
+            circle(0, 0, b.r * 2);
+            fill(0, 0, 0, 100);
+            circle(0, 0, b.r); 
+        }
+        
+        if (active && b.type === 'ref') {
+            noFill();
+            stroke(255);
+            strokeWeight(2);
+            circle(0, 0, b.r * 2.5);
+        }
+        clearGlow();
+        pop();
+    });
+}
+
+function mousePressed() {
+    sliders.forEach(sl => {
+        let thumbX = map(sl.val, sl.min, sl.max, sl.x, sl.x + sl.w);
+        if (mouseX >= thumbX - 10 && mouseX <= thumbX + 10 && mouseY >= sl.y - 10 && mouseY <= sl.y + sl.h + 10) {
+            sl.dragging = true;
+        } else if (mouseX >= sl.x && mouseX <= sl.x + sl.w && mouseY >= sl.y - 10 && mouseY <= sl.y + sl.h + 10) {
+            sl.dragging = true;
+            updateSlider(sl, mouseX);
+        }
+    });
+
+    buttons.forEach(b => {
+        if (dist(mouseX, mouseY, b.x, b.y) <= b.r) {
+            if (b.type === 'ref') selectedRef = b.id;
+            else if (b.type === 'trail') trailMode = !trailMode;
+            else if (b.type === 'pause') isFrozen = true;
+            else if (b.type === 'play') isFrozen = false;
+            else if (b.type === 'gunLeft') launchProjectile(-1);
+            else if (b.type === 'gunRight') launchProjectile(1);
+        }
+    });
+}
+
+function mouseDragged() {
+    sliders.forEach(sl => {
+        if (sl.dragging) updateSlider(sl, mouseX);
+    });
+}
+
+function mouseReleased() {
+    sliders.forEach(sl => sl.dragging = false);
+}
+
+function updateSlider(sl, mx) {
+    let constrainedX = constrain(mx, sl.x, sl.x + sl.w);
+    let newVal = map(constrainedX, sl.x, sl.x + sl.w, sl.min, sl.max);
+    let finalVal = constrain(newVal, sl.min, sl.max);
+    
+    sl.val = finalVal;
+    if (sl.id === 'platform') platformSpeed = finalVal;
+    if (sl.id === 'bullet') C_SPEED = finalVal;
+}
+</script>
+</body>
+</html>

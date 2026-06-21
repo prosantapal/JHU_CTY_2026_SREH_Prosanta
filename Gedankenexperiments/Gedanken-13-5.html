@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vertical Light Clocks</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #030305;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+            color: white;
+            user-select: none;
+        }
+        canvas {
+            box-shadow: 0 0 50px rgba(0, 0, 0, 1);
+            border-radius: 8px;
+        }
+    </style>
+</head>
+<body>
+<script>
+// --- Constants & Globals ---
+const WIDTH = 1000;
+const HEIGHT = 600;
+const FPS = 60;
+
+// Physics constants
+const C = 50.0; 
+const INITIAL_CLOCK_LENGTH = 150;
+const CLOCK_WIDTH = 12; // Slightly wider for visual clarity
+
+// Origin points
+const ORIGIN_X = WIDTH / 4;
+const ORIGIN_Y = HEIGHT / 2 + 50;
+const STATIONARY_X = ORIGIN_X;
+const STATIONARY_Y = ORIGIN_Y;
+
+let sim;
+let palette;
+
+function setup() {
+    createCanvas(WIDTH, HEIGHT);
+    frameRate(FPS);
+    
+    palette = {
+        bg: color(8, 10, 15),
+        red: color(255, 50, 80),     // Stationary Clock
+        cyan: color(0, 200, 255),    // Moving Clock (Replaced plain blue with neon cyan)
+        yellow: color(255, 255, 100),// Photons
+        white: color(255),
+        gray: color(100, 110, 120),
+        lightGray: color(180, 190, 200),
+        darkGray: color(30, 35, 40)
+    };
+
+    sim = new Simulation();
+}
+
+// --- Native Glow Helper ---
+function setGlow(clr, blurSize) {
+    drawingContext.shadowBlur = blurSize;
+    drawingContext.shadowColor = clr.toString();
+}
+
+function clearGlow() {
+    drawingContext.shadowBlur = 0;
+}
+
+// --- Simulation Class ---
+class Simulation {
+    constructor() {
+        this.speed_fraction = 0.0;
+        this.is_animating = false;
+        this.is_frozen = false;
+        this.time = 0.0;
+        this.clock_pos_x = 0.0;
+
+        // Continuous Clock Times
+        this.st_time = 0.0;
+        this.moving_time = 0.0;
+
+        this.vertical_length = INITIAL_CLOCK_LENGTH;
+
+        // Photons
+        this.v_photon = { x: 0, y: 0, vx: 0, vy: 0, active: false };
+        this.st_v_photon = { x: 0, y: 0, vx: 0, vy: 0, active: false };
+
+        // Trails
+        this.show_trails = false;
+        this.v_trail = [];
+        this.st_v_trail = [];
+
+        this.step_frame_requested = false;
+    }
+
+    start_animation() {
+        this.is_animating = true;
+        this.time = 0.0;
+        this.st_time = 0.0;
+        this.moving_time = 0.0;
+        this.clock_pos_x = 0.0;
+
+        // Moving clock vertical photon
+        let v_horizontal = this.speed_fraction * C;
+        let v_vertical = this.speed_fraction < 1.0 ? sqrt(C * C - v_horizontal * v_horizontal) : 0;
+        this.v_photon = { x: 0, y: 0, vx: v_horizontal, vy: v_vertical, active: true };
+
+        // Stationary clock vertical photon
+        this.st_v_photon = { x: 0, y: 0, vx: 0, vy: C, active: true };
+
+        this.v_trail = [];
+        this.st_v_trail = [];
+    }
+
+    reset() {
+        this.is_animating = false;
+        this.time = 0.0;
+        this.st_time = 0.0;
+        this.moving_time = 0.0;
+        this.clock_pos_x = 0.0;
+        this.v_photon.active = false;
+        this.st_v_photon.active = false;
+        this.is_frozen = false;
+        this.step_frame_requested = false;
+        this.v_trail = [];
+        this.st_v_trail = [];
+    }
+
+    handle_continuous_input() {
+        if (!this.is_animating) {
+            if (keyIsDown(UP_ARROW)) {
+                this.speed_fraction = min(this.speed_fraction + 0.01, 0.99);
+            }
+            if (keyIsDown(DOWN_ARROW)) {
+                this.speed_fraction = max(this.speed_fraction - 0.01, 0.0);
+            }
+        }
+    }
+
+    update_photon_vertical(photon, dt, v_horizontal, v_vertical, length) {
+        if (!photon.active) return;
+
+        photon.x += v_horizontal * dt;
+        photon.y += photon.vy * dt;
+
+        // Bounce between y = 0 and y = length
+        if (photon.vy > 0 && photon.y >= length) {
+            photon.vy = -v_vertical;
+            photon.y = length;
+        } else if (photon.vy < 0 && photon.y <= 0) {
+            photon.vy = v_vertical;
+            photon.y = 0;
+        }
+    }
+
+    calculate_continuous_time(dt) {
+        // Stationary clock round trip time
+        let st_round_trip_time = 2.0 * INITIAL_CLOCK_LENGTH / C;
+        this.st_time += dt / st_round_trip_time;
+
+        // Moving clock round trip time (Path is longer via Pythagoras)
+        let v_round_trip_time = 1e9;
+        if (this.speed_fraction < 1.0) {
+            let v_horizontal = this.speed_fraction * C;
+            let v_vertical = sqrt(C * C - v_horizontal * v_horizontal);
+            v_round_trip_time = 2.0 * this.vertical_length / v_vertical;
+        }
+        this.moving_time += dt / v_round_trip_time;
+    }
+
+    single_step() {
+        if (this.is_animating && this.is_frozen) {
+            this.step_frame_requested = true;
+        }
+    }
+
+    update(dt) {
+        if (!this.is_animating) return;
+
+        this.time += dt;
+        this.clock_pos_x += this.speed_fraction * C * dt;
+
+        // Update Photons
+        let v_horizontal = this.speed_fraction * C;
+        let v_vertical = this.speed_fraction < 1.0 ? sqrt(C * C - v_horizontal * v_horizontal) : 0;
+        
+        this.update_photon_vertical(this.v_photon, dt, v_horizontal, v_vertical, this.vertical_length);
+        this.update_photon_vertical(this.st_v_photon, dt, 0, C, INITIAL_CLOCK_LENGTH);
+
+        // Update Time
+        this.calculate_continuous_time(dt);
+
+        // Update Trails
+        if (this.show_trails) {
+            if (this.v_photon.active) {
+                this.v_trail.push({x: this.v_photon.x, y: this.v_photon.y});
+            }
+            if (this.st_v_photon.active) {
+                this.st_v_trail.push({x: this.st_v_photon.x, y: this.st_v_photon.y});
+            }
+            // Memory limit for web safety
+            if (this.v_trail.length > 2000) this.v_trail.shift();
+            if (this.st_v_trail.length > 2000) this.st_v_trail.shift();
+        }
+    }
+}
+
+// --- Drawing Functions ---
+function drawTimingCircles() {
+    noFill();
+    let max_radius = min(WIDTH - ORIGIN_X - 50, ORIGIN_Y - 50, ORIGIN_X - 50);
+    
+    for (let r = 50; r <= max_radius; r += 50) {
+        let alpha = map(r, 50, max_radius, 150, 20);
+        stroke(60, 70, 80, alpha);
+        strokeWeight(1);
+        if (r % 100 === 0) strokeWeight(2);
+        circle(ORIGIN_X, ORIGIN_Y, r * 2);
+    }
+}
+
+function drawAxes() {
+    stroke(palette.gray);
+    strokeWeight(2);
+    // X Axis
+    line(50, ORIGIN_Y, WIDTH - 50, ORIGIN_Y);
+    // Y (T) Axis
+    line(ORIGIN_X, 50, ORIGIN_X, HEIGHT - 50);
+    
+    fill(palette.white);
+    noStroke();
+    circle(ORIGIN_X, ORIGIN_Y, 6);
+    
+    textSize(20);
+    textStyle(BOLD);
+    fill(palette.lightGray);
+    text("X", WIDTH - 30, ORIGIN_Y + 5);
+    text("T", ORIGIN_X - 25, 40);
+}
+
+function drawClocks() {
+    // 1. Moving Clock (Cyan)
+    let clock_screen_x = ORIGIN_X + sim.clock_pos_x;
+    
+    setGlow(palette.cyan, 15);
+    fill(0, 0, 0, 150);
+    stroke(palette.cyan);
+    strokeWeight(2);
+    rect(clock_screen_x - CLOCK_WIDTH / 2, ORIGIN_Y - sim.vertical_length, CLOCK_WIDTH, sim.vertical_length, 4);
+    clearGlow();
+
+    // 2. Stationary Clock (Red)
+    setGlow(palette.red, 15);
+    fill(0, 0, 0, 150);
+    stroke(palette.red);
+    strokeWeight(2);
+    rect(STATIONARY_X - CLOCK_WIDTH / 2, STATIONARY_Y - INITIAL_CLOCK_LENGTH, CLOCK_WIDTH, INITIAL_CLOCK_LENGTH, 4);
+    clearGlow();
+}
+
+function drawPhotons() {
+    if (!sim.is_animating) return;
+
+    noFill();
+    
+    // Stationary Clock Trail
+    if (sim.show_trails && sim.st_v_trail.length > 1) {
+        stroke(palette.red);
+        strokeWeight(2);
+        beginShape();
+        for (let pt of sim.st_v_trail) {
+            vertex(STATIONARY_X + pt.x, STATIONARY_Y - pt.y);
+        }
+        endShape();
+    }
+
+    // Moving Clock Trail
+    if (sim.show_trails && sim.v_trail.length > 1) {
+        stroke(palette.cyan);
+        strokeWeight(2);
+        beginShape();
+        for (let pt of sim.v_trail) {
+            vertex(ORIGIN_X + pt.x, ORIGIN_Y - pt.y);
+        }
+        endShape();
+    }
+
+    // Stationary Photon
+    if (sim.st_v_photon.active) {
+        let px = STATIONARY_X + sim.st_v_photon.x;
+        let py = STATIONARY_Y - sim.st_v_photon.y;
+        setGlow(palette.yellow, 15);
+        fill(palette.yellow);
+        noStroke();
+        circle(px, py, 12);
+        clearGlow();
+    }
+
+    // Moving Photon
+    if (sim.v_photon.active) {
+        let px = ORIGIN_X + sim.v_photon.x;
+        let py = ORIGIN_Y - sim.v_photon.y;
+        setGlow(palette.yellow, 15);
+        fill(palette.yellow);
+        noStroke();
+        circle(px, py, 12);
+        
+        // Inner core
+        fill(palette.white);
+        circle(px, py, 6);
+        clearGlow();
+    }
+}
+
+function drawUI() {
+    // Speed Display (Top Right)
+    textAlign(RIGHT, TOP);
+    textSize(28);
+    textStyle(BOLD);
+    fill(palette.cyan);
+    text(`Speed: ${sim.speed_fraction.toFixed(2)}c`, WIDTH - 40, 30);
+
+    // Continuous Time Displays
+    if (sim.is_animating) {
+        textSize(42);
+        fill(palette.red);
+        text(`Stationary (t): ${sim.st_time.toFixed(2)}`, WIDTH - 40, 70);
+        
+        fill(palette.cyan);
+        text(`Moving (t'): ${sim.moving_time.toFixed(2)}`, WIDTH - 40, 115);
+    }
+
+    // Interactive Instructions Panel (Bottom Right)
+    let startX = WIDTH / 2 + 100;
+    let startY = HEIGHT / 2 + 60;
+    
+    textAlign(LEFT, TOP);
+    textSize(16);
+    textStyle(NORMAL);
+    
+    let lines = [];
+    if (!sim.is_animating) {
+        lines.push({t: "↑↓ Arrows: Adjust speed (hold)", c: palette.white});
+        lines.push({t: `T: Toggle trails (${sim.show_trails ? 'ON' : 'OFF'})`, c: palette.lightGray});
+        lines.push({t: "P: Start animation", c: palette.yellow});
+        lines.push({t: "R: Reset", c: palette.white});
+    } else {
+        if (sim.is_frozen) {
+            lines.push({t: "Animation FROZEN - Press U to unfreeze", c: palette.red});
+            lines.push({t: "F: Advance one frame", c: palette.yellow});
+        } else {
+            lines.push({t: "Animation running - Press F to freeze, R to reset", c: palette.yellow});
+            lines.push({t: "F: Freeze, U: Unfreeze", c: palette.white});
+        }
+        lines.push({t: `T: Toggle trails (${sim.show_trails ? 'ON' : 'OFF'})`, c: palette.lightGray});
+    }
+    
+    lines.push({t: `Clock length: ${INITIAL_CLOCK_LENGTH}px`, c: palette.cyan});
+    
+    if (sim.is_animating) {
+        lines.push({t: `Moving clock pos: ${sim.clock_pos_x.toFixed(1)}`, c: palette.white});
+    }
+
+    lines.push({t: "", c: palette.white}); // Spacer
+    lines.push({t: "RELATIVISTIC TIME DILATION", c: palette.yellow});
+    lines.push({t: "Time progresses smoothly and continuously.", c: palette.lightGray});
+    lines.push({t: "Each complete round trip = 1 time unit.", c: palette.lightGray});
+    lines.push({t: "Moving clock ticks slower, showing time dilation.", c: palette.lightGray});
+    lines.push({t: "Toggle trails to see the photon's diagonal path.", c: palette.lightGray});
+
+    for (let i = 0; i < lines.length; i++) {
+        fill(lines[i].c);
+        text(lines[i].t, startX, startY + i * 22);
+    }
+}
+
+// --- Main Loop ---
+function draw() {
+    background(palette.bg);
+    
+    sim.handle_continuous_input();
+    
+    // Exactly 1/60s step to match Pygame logic
+    if (!sim.is_frozen || sim.step_frame_requested) {
+        sim.update(1.0 / FPS);
+        sim.step_frame_requested = false;
+    }
+
+    drawTimingCircles();
+    drawAxes();
+    drawClocks();
+    drawPhotons();
+    drawUI();
+}
+
+// --- Input Handling ---
+function keyPressed() {
+    if (key.toLowerCase() === 'p' && !sim.is_animating) {
+        sim.start_animation();
+    } else if (key.toLowerCase() === 'r') {
+        sim.reset();
+    } else if (key.toLowerCase() === 'f' && sim.is_animating) {
+        if (sim.is_frozen) {
+            sim.single_step();
+        } else {
+            sim.is_frozen = true;
+        }
+    } else if (key.toLowerCase() === 'u' && sim.is_animating) {
+        sim.is_frozen = false;
+        sim.step_frame_requested = false;
+    } else if (key.toLowerCase() === 't') {
+        sim.show_trails = !sim.show_trails;
+        if (!sim.show_trails) {
+            sim.v_trail = [];
+            sim.st_v_trail = [];
+        }
+    }
+}
+</script>
+</body>
+</html>
