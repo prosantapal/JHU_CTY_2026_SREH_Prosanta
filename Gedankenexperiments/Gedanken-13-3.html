@@ -30,7 +30,7 @@
 const WIDTH = 1000;
 const HEIGHT = 600;
 
-// Colors matching original Python, upgraded for p5 glow
+// Colors
 let colorSky, colorGround, colorWhite, colorYellow, colorRed, colorGreen, colorBlue, colorGray;
 
 // Slowed simulation by 50%
@@ -38,7 +38,7 @@ const LIGHT_SPEED = 5000.0 * 0.5; // px/s scaled for visualization
 
 // Observer parameters
 const OBSERVER_NAMES = ["A", "0", "B"];
-const OBSERVER_Y_OFFSET = -40; // Ground height - 40px
+const OBSERVER_Y_OFFSET = -40; 
 
 // Modes
 const MODE_2_OBSERVERS = 0;
@@ -58,12 +58,9 @@ let selectedObserver = 0;
 let gameTime = 0;
 let showAnswer = false;
 
-let labelFont, titleFont;
-
 function setup() {
     createCanvas(WIDTH, HEIGHT);
     
-    // DefineColors
     colorSky = color(10, 10, 30);
     colorGround = color(60, 60, 65);
     colorWhite = color(255);
@@ -73,11 +70,10 @@ function setup() {
     colorBlue = color(80, 150, 255);
     colorGray = color(150);
 
-    // Create stars
     for (let i = 0; i < 100; i++) {
         stars.push({
             x: random(WIDTH),
-            y: random(HEIGHT * 3 / 4), // Only in the sky
+            y: random(HEIGHT * 3 / 4),
             brightness: random(100, 255),
             twinkle: random(TWO_PI)
         });
@@ -91,7 +87,6 @@ function setupSimulation() {
     let groundY = HEIGHT * 3 / 4;
     let observerY = groundY - 30;
 
-    // Clear history
     clockHistory = [[], [], []];
     lightPulses = [];
     gameTime = 0;
@@ -101,27 +96,26 @@ function setupSimulation() {
     if (currentMode === MODE_2_OBSERVERS) {
         let observerSpacing = WIDTH / 3;
         observerPositions = [
-            createVector(observerSpacing, observerY),       // Observer A
-            createVector(WIDTH - observerSpacing, observerY) // Observer B
+            createVector(observerSpacing, observerY),       
+            createVector(WIDTH - observerSpacing, observerY) 
         ];
-        // p5 specific observer names handled dynamically below in drawing
         observerColors = [colorRed, colorBlue];
         clockHistory = [[], []];
         pairSynchronization = {"A-B": null};
-        selectedObserver = selectedObserver % 2; // ensure valid index if swapping
+        selectedObserver = selectedObserver % 2; 
     } else {
         let observerSpacing = WIDTH / 4;
         observerPositions = [
-            createVector(observerSpacing, observerY), // Observer A
-            createVector(WIDTH / 2, observerY),        // Observer 0
-            createVector(WIDTH - observerSpacing, observerY) // Observer B
+            createVector(observerSpacing, observerY), 
+            createVector(WIDTH / 2, observerY),        
+            createVector(WIDTH - observerSpacing, observerY) 
         ];
         observerColors = [colorRed, colorGreen, colorBlue];
         clockHistory = [[], [], []];
         
-        // Mode 3: one randomly unsynchronized observer (tends to make sync harder)
+        // Exactly 0.1s offset matching the Python script for clean math
         let unsynchronizedObserver = floor(random(0, 3));
-        timeOffsets[unsynchronizedObserver] = random(0.05, 0.2); // Random offset in seconds
+        timeOffsets[unsynchronizedObserver] = 0.1; 
 
         pairSynchronization = {
             "A-B": null, "A-0": null, "0-B": null
@@ -150,7 +144,6 @@ class LightPulse {
         this.arrivalTimes = Array(observerPositions.length).fill(-1);
         this.arrivalTimes[originIdx] = startTime;
         
-        // Record emission time
         clockHistory[originIdx].push((startTime + timeOffsets[originIdx]) % 100);
     }
 
@@ -160,24 +153,18 @@ class LightPulse {
         this.radius += LIGHT_SPEED * dt;
         
         for (let i = 0; i < observerPositions.length; i++) {
-            // Check for arrival at other observers
             if (i !== this.originIdx && this.arrivalTimes[i] === -1) {
                 let distance = p5.Vector.dist(observerPositions[i], this.origin);
                 
                 if (this.radius >= distance) {
                     let travelTime = distance / LIGHT_SPEED;
                     this.arrivalTimes[i] = this.startTime + travelTime;
-                    
-                    // Record arrival time in other observer's local clock history
                     clockHistory[i].push((this.arrivalTimes[i] + timeOffsets[i]) % 100);
                 }
             }
         }
         
-        // Deactivate when off-screen
-        if (this.radius > WIDTH * 1.5) {
-            this.active = false;
-        }
+        if (this.radius > WIDTH * 1.5) this.active = false;
     }
 
     draw() {
@@ -185,12 +172,10 @@ class LightPulse {
         noFill();
         strokeWeight(2);
         
-        // Glowing Neon effect
         setGlow(colorYellow, 15);
         stroke(colorYellow);
         ellipse(this.origin.x, this.origin.y, this.radius * 2);
         
-        // Internal pulse line for structure
         stroke(255);
         strokeWeight(1);
         ellipse(this.origin.x, this.origin.y, this.radius * 2 - 4);
@@ -207,7 +192,6 @@ function drawObserverFigure(p, colorFigure, localName, timeValue) {
     push();
     if (isSelected) setGlow(colorFigure, 20);
     
-    // Upgrade stick figure to an avatar circle with specific lab color
     fill(colorFigure);
     noStroke();
     rectMode(CENTER);
@@ -223,7 +207,6 @@ function drawObserverFigure(p, colorFigure, localName, timeValue) {
     pop();
     clearGlow();
 
-    // Clock Label
     textAlign(CENTER, BOTTOM);
     textSize(18);
     textStyle(BOLD);
@@ -231,37 +214,34 @@ function drawObserverFigure(p, colorFigure, localName, timeValue) {
     let labelLower = localName === "0" ? "₀" : localName.toLowerCase();
     text("Observer " + localName, x, y + 25);
 
-    // Current time
     textStyle(NORMAL);
     textSize(18);
     let timeFormatted = (timeValue % 100).toFixed(1);
     text(`t${labelLower}: ${timeFormatted}`, x, y - 75);
 
-    // Selected indicator
     if (isSelected) {
         fill(colorYellow);
         textSize(16);
         text("SELECTED", x, y + 45);
     }
 
-    // Flash History Records
+    // Flash History Records (Slice to prevent running off screen)
     textAlign(LEFT, TOP);
     textSize(16);
     let currentIdx = observerPositions.indexOf(p);
     let records = clockHistory[currentIdx];
-    for (let i = 0; i < records.length; i++) {
-        let alpha = map(i, 0, records.length, 255, 100);
-        fill(255, 255, 100, alpha); // Neon yellow history
-        text(records[i].toFixed(1), x + 25, y - 60 + i * 20);
+    let displayRecords = records.slice(-5); // Keep last 5
+
+    for (let i = 0; i < displayRecords.length; i++) {
+        let alpha = map(i, 0, displayRecords.length, 100, 255);
+        fill(255, 255, 100, alpha); 
+        text(displayRecords[i].toFixed(1), x + 25, y - 60 + i * 20);
     }
 }
 
 function drawSynchronizationResults() {
-    let resultsX0 = 50;
     let resultsY0 = 60;
-    let colWidth = currentMode === MODE_2_OBSERVERS ? WIDTH - 100 : WIDTH / 3 - 50;
 
-    // Mapping Python pair names to p5 results layout
     let resultPairs = [];
     if (currentMode === MODE_2_OBSERVERS) {
         resultPairs = [{ name: "A-B", x: WIDTH / 2 }];
@@ -281,10 +261,8 @@ function drawSynchronizationResults() {
         if (result) {
             let leftLabel = pairName.split('-')[0];
             let rightLabel = pairName.split('-')[1];
-            let labelSuffixL = leftLabel.toLowerCase();
-            let labelSuffixR = rightLabel.toLowerCase();
-            if(leftLabel === "0") labelSuffixL = "₀";
-            if(rightLabel === "0") labelSuffixR = "₀";
+            let labelSuffixL = leftLabel === "0" ? "₀" : leftLabel.toLowerCase();
+            let labelSuffixR = rightLabel === "0" ? "₀" : rightLabel.toLowerCase();
 
             textAlign(CENTER, TOP);
             textSize(18);
@@ -300,14 +278,14 @@ function drawSynchronizationResults() {
             text(syncText, pos_x, resultsY0 + 25);
             clearGlow();
 
-            // Einstein's Criterion Formula
+            // Einstein's Criterion Formula (FIXED)
             textStyle(NORMAL);
             textSize(16);
             fill(colorWhite);
-            let formulaText = `Einstein's criterion: T${labelSuffixR}' - T${labelSuffixL} = T${labelSuffixL}'' - T${labelSuffixR}'`;
+            let formulaText = `Criterion: T${labelSuffixR}' - T${labelSuffixL} = T${labelSuffixL}' - T${labelSuffixR}`;
             text(formulaText, pos_x, resultsY0 + 55);
 
-            // Detailed Measurements
+            // Detailed Measurements (FIXED variable labels)
             textSize(14);
             textAlign(CENTER, TOP);
             let measurements = [
@@ -315,9 +293,9 @@ function drawSynchronizationResults() {
                 `Arrival (R): T${labelSuffixR}' = ${result.t_right_prime.toFixed(1)}`,
                 `Forward Δt: T${labelSuffixR}' - T${labelSuffixL} = ${result.time_diff_left_to_right.toFixed(1)}`,
                 "",
-                `Emission (R): T${labelSuffixR}' = ${result.t_right.toFixed(1)}`,
-                `Arrival (L): T${labelSuffixL}'' = ${result.t_left_prime.toFixed(1)}`,
-                `Backward Δt: T${labelSuffixL}'' - T${labelSuffixR}' = ${result.time_diff_right_to_left.toFixed(1)}`,
+                `Emission (R): T${labelSuffixR} = ${result.t_right.toFixed(1)}`, // Removed incorrect prime
+                `Arrival (L): T${labelSuffixL}' = ${result.t_left_prime.toFixed(1)}`, // Added prime
+                `Backward Δt: T${labelSuffixL}' - T${labelSuffixR} = ${result.time_diff_right_to_left.toFixed(1)}`,
                 "",
                 `Δt Diff: |${result.time_diff_left_to_right.toFixed(1)} - ${result.time_diff_right_to_left.toFixed(1)}| = ${abs(result.time_diff_left_to_right - result.time_diff_right_to_left).toFixed(3)}s`
             ];
@@ -338,11 +316,11 @@ function drawQuestionHud() {
     if (currentMode === MODE_2_OBSERVERS) {
         text("Are clocks A and B synchronized?", WIDTH / 2, 60);
     } else {
-        observerNamesTemp = ["A", "0", "B"];
-        observerXTemp = observerPositions.map(p => p.x);
-        text("Synchronized?", observerXTemp[0], 60); // A-0 over A
-        text("Synchronized?", observerXTemp[1], 60); // 0-B over 0
-        text("Synchronized?", observerXTemp[2], 60); // A-B over B
+        let observerXTemp = observerPositions.map(p => p.x);
+        // Explicitly labeled questions to avoid confusion
+        text("A-0 Synchronized?", observerXTemp[0], 60); 
+        text("0-B Synchronized?", observerXTemp[1], 60); 
+        text("A-B Synchronized?", observerXTemp[2], 60); 
     }
     textStyle(NORMAL);
 }
@@ -365,12 +343,6 @@ function updateSynchronizationLogic() {
         let rightIdx = pData[1];
         let pairName = pData[2];
 
-        // Einstein defined synchronization: 
-        // Clock R is sync'd to Clock L if a signal emitted from L at T_L arrives at R at T_R',
-        // and a signal immediately reflected back from R at T_R' arrives at L at T_L'', 
-        // and T_R' - T_L == T_L'' - T_R'
-
-        // Wait for latest signal from L->R
         let pulse_L_to_R = null;
         for (let p of lightPulses) {
             if (p.originIdx === leftIdx && p.arrivalTimes[rightIdx] !== -1) {
@@ -380,7 +352,6 @@ function updateSynchronizationLogic() {
             }
         }
 
-        // Wait for latest signal from R->L
         let pulse_R_to_L = null;
         for (let p of lightPulses) {
             if (p.originIdx === rightIdx && p.arrivalTimes[leftIdx] !== -1) {
@@ -390,25 +361,22 @@ function updateSynchronizationLogic() {
             }
         }
 
-        // If both pulses exist, calculate synchronization
         if (pulse_L_to_R && pulse_R_to_L) {
-            // Apply current time + offsets % 100 for clock logic
             let t_left = (pulse_L_to_R.startTime + timeOffsets[leftIdx]) % 100;
             let t_right_prime = (pulse_L_to_R.arrivalTimes[rightIdx] + timeOffsets[rightIdx]) % 100;
             
             let t_right = (pulse_R_to_L.startTime + timeOffsets[rightIdx]) % 100;
             let t_left_prime = (pulse_R_to_L.arrivalTimes[leftIdx] + timeOffsets[leftIdx]) % 100;
 
-            // Einstein defined synchronization (Forward Δt vs Backward Δt)
             let timeDiffFwd = t_right_prime - t_left;
             let timeDiffBwd = t_left_prime - t_right;
 
-            // Handle %100 rollover logic (wrap time diffs back into 0-100 range)
+            // Handle rollover
             if (timeDiffFwd < 0) timeDiffFwd += 100;
             if (timeDiffBwd < 0) timeDiffBwd += 100;
 
-            // Allow very small rounding difference for JS float math
-            let isSynchronized = abs(timeDiffFwd - timeDiffBwd) < 0.05;
+            // Using exactly < 0.1 matching Python since the offset is exactly 0.1
+            let isSynchronized = abs(timeDiffFwd - timeDiffBwd) < 0.1;
 
             pairSynchronization[pairName] = {
                 synchronized: isSynchronized,
@@ -428,19 +396,14 @@ function draw() {
     let dt = deltaTime / 1000.0;
     gameTime += dt;
 
-    // Update current observer clock times
     for (let i = 0; i < observerTimes.length; i++) {
         observerTimes[i] = (gameTime + timeOffsets[i]) % 100;
     }
 
-    // Update Light Pulses
-    for (let pulse of lightPulses) {
-        pulse.update(dt);
-    }
+    for (let pulse of lightPulses) pulse.update(dt);
 
     updateSynchronizationLogic();
 
-    // Background Rendering
     background(colorSky);
     for (let star of stars) {
         let tw = sin(frameCount * 0.05 + star.twinkle) * 100;
@@ -455,19 +418,14 @@ function draw() {
     rectMode(CORNER);
     rect(0, groundY, WIDTH, HEIGHT - groundY);
 
-    // Light Pulses (Rendered over background, under figures)
-    for (let pulse of lightPulses) {
-        pulse.draw();
-    }
+    for (let pulse of lightPulses) pulse.draw();
 
-    // Question or Formulae
     if (showAnswer) {
         drawSynchronizationResults();
     } else {
         drawQuestionHud();
     }
 
-    // Observers Rendering
     observerNames = currentMode === MODE_2_OBSERVERS ? ["A", "B"] : ["A", "0", "B"];
     for (let i = 0; i < observerPositions.length; i++) {
         drawObserverFigure(
@@ -478,7 +436,6 @@ function draw() {
         );
     }
 
-    // HUD Text (Lower Left)
     textAlign(LEFT, BOTTOM);
     textSize(16);
     fill(colorWhite);
@@ -492,7 +449,6 @@ function draw() {
     textStyle(NORMAL);
     text("Left/Right arrows select, Space emits light, [C]lear, [M]ode, [A]nswer", 15, HEIGHT - 30);
 
-    // Title
     textAlign(CENTER, TOP);
     textSize(24);
     fill(colorWhite);
@@ -520,7 +476,7 @@ function keyPressed() {
         resetPairSyncStates();
     } else if (key.toLowerCase() === 'm') {
         currentMode = currentMode === MODE_2_OBSERVERS ? MODE_3_OBSERVERS : MODE_2_OBSERVERS;
-        showAnswer = false; // reset answer display
+        showAnswer = false; 
         setupSimulation();
     } else if (key.toLowerCase() === 'a') {
         showAnswer = !showAnswer;
@@ -534,7 +490,6 @@ function resetPairSyncStates() {
         pairSynchronization = {"A-B": null, "A-0": null, "0-B": null};
     }
 }
-
 </script>
 </body>
 </html>
